@@ -11,7 +11,8 @@ import torchvision.transforms as transforms
 import os
 import argparse
 
-from models.cifar10.fp import *
+from models.cifar10.fp.resnet import ResNet18
+from models.cifar10.fp.mobilenetv2 import MobileNetV2
 from utils.utils import progress_bar
 
 
@@ -55,13 +56,13 @@ classes = ('plane', 'car', 'bird', 'cat', 'deer',
 # Model
 print('==> Building model..')
 # net = VGG('VGG19')
-net = ResNet18()
+# net = ResNet18()
 # net = PreActResNet18()
 # net = GoogLeNet()
 # net = DenseNet121()
 # net = ResNeXt29_2x64d()
 # net = MobileNet()
-# net = MobileNetV2()
+net = MobileNetV2()
 # net = DPN92()
 # net = ShuffleNetG2()
 # net = SENet18()
@@ -144,7 +145,7 @@ def test(epoch):
         }
         if not os.path.isdir('checkpoint'):
             os.mkdir('checkpoint')
-        torch.save(state, './checkpoint/nofull-ckpt.pth')
+        torch.save(state, './checkpoint/mobilenet-ckpt.pth')
         best_acc = acc
 
 
