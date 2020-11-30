@@ -93,8 +93,6 @@ if args.resume:
     assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
     checkpoint = torch.load('./checkpoint/mobilenet-ckpt.pth')
     net.load_state_dict(checkpoint['net'])
-    best_acc = checkpoint['acc']
-    start_epoch = checkpoint['epoch']
 
 net = replace_conv_recursively(net, args.quan_mode, args)
 
