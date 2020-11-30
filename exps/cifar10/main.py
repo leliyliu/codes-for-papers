@@ -14,7 +14,7 @@ import argparse
 from models.cifar10.fp.resnet import ResNet18
 from models.cifar10.fp.mobilenetv2 import MobileNetV2
 from utils.utils import progress_bar
-
+from utils.ptflops import get_model_complexity_info
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -63,6 +63,9 @@ print('==> Building model..')
 # net = ResNeXt29_2x64d()
 # net = MobileNet()
 net = MobileNetV2()
+
+flops, params = get_model_complexity_info(net, (3,32,32))
+print('the total flops of mobilenetv2 is : {} and whole params is : {}'.format(flops, params)) 
 # net = DPN92()
 # net = ShuffleNetG2()
 # net = SENet18()
@@ -149,7 +152,7 @@ def test(epoch):
         best_acc = acc
 
 
-for epoch in range(start_epoch, start_epoch+20):
+for epoch in range(start_epoch, start_epoch+200):
     train(epoch)
     test(epoch)
     scheduler.step()
