@@ -6,6 +6,8 @@ Copyright (C) 2019 Sovrasov V. - All Rights Reserved
  * this file. If not visit https://opensource.org/licenses/MIT
 '''
 
+from models._modules.mixed_dpq import Conv2dDPQ
+from models._modules.lsq import Conv2dLSQ
 import sys
 import math
 from functools import partial
@@ -140,7 +142,7 @@ def print_model_with_flops(model, total_flops, total_params, units='GMac',
             del m.accumulate_flops
 
     model.apply(add_extra_repr)
-    print(model, file=ost)
+    # print(model, file=ost)
     model.apply(del_extra_repr)
 
 
@@ -457,6 +459,50 @@ def conv_sq_flops_counter_hook(conv_module, input, output):
 
     conv_module.__flops__ += int(overall_flops)
 
+def conv_lsq_flops_counter_hook(conv_module, input, output):
+    input = input[0]
+    batch_size = input.shape[0]
+    output_dims = list(output.shape[2:])
+
+    kernel_dims = list(conv_module.kernel_size)
+    in_channels = conv_module.in_channels
+    out_channels = conv_module.out_channels
+    groups = conv_module.groups
+
+    filters_per_channel = out_channels // groups
+    conv_per_position_flops = int(np.prod(kernel_dims)) * in_channels * filters_per_channel
+
+    active_elements_count = batch_size * int(np.prod(output_dims))
+    overall_conv_flops = conv_per_position_flops * active_elements_count
+    nbits_a = conv_module.act.nbits if 0 < conv_module.act.nbits <= 8 else 8
+    nbits_w = conv_module.nbits if 0 < conv_module.nbits <= 8 else 8
+    bit22 = nbits_a * nbits_w
+    overall_conv_flops = overall_conv_flops * bit22 / 64
+
+    conv_module.__flops__ += int(overall_conv_flops)
+
+def conv_dpq_flops_counter_hook(conv_module, input, output):
+    input = input[0]
+    batch_size = input.shape[0]
+    output_dims = list(output.shape[2:])
+
+    kernel_dims = list(conv_module.kernel_size)
+    in_channels = conv_module.in_channels
+    out_channels = conv_module.out_channels
+    groups = conv_module.groups
+
+    filters_per_channel = out_channels // groups
+    conv_per_position_flops = int(np.prod(kernel_dims)) * in_channels * filters_per_channel
+
+    active_elements_count = batch_size * int(np.prod(output_dims))
+    overall_conv_flops = conv_per_position_flops * active_elements_count
+    nbits_a = conv_module.act_dpq.nbits if 0 < conv_module.act_dpq.nbits <= 8 else 8
+    nbits_w = conv_module.nbits if 0 < conv_module.nbits <= 8 else 8
+    bit22 = nbits_a * nbits_w
+    overall_conv_flops = overall_conv_flops * bit22 / 64
+
+    conv_module.__flops__ += int(overall_conv_flops)
+
 
 def batch_counter_hook(module, input, output):
     batch_size = 1
@@ -583,6 +629,8 @@ MODULES_MAPPING = {
     my_nn.Conv2dBPv1: conv_bp_cycle_counter_hook,
     my_nn.Conv2dBPv2: conv_bp_cycle_counter_hook,
     my_nn.Conv2dSQ: conv_sq_flops_counter_hook,
+    my_nn.Conv2dLSQ: conv_lsq_flops_counter_hook,
+    my_nn.Conv2dDPQ: conv_dpq_flops_counter_hook,
     nn.Conv3d: conv_flops_counter_hook,
     # activations
     nn.ReLU: relu_flops_counter_hook,
