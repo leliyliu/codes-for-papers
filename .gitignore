@@ -135,6 +135,7 @@ checkpoint
 # models 
 pretrained
 *.pth.tar
+*.pth
 
 # log 
 *.log 
