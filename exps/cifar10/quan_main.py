@@ -9,11 +9,14 @@ import torchvision
 import torchvision.transforms as transforms
 
 import os
+import time 
+import logging
+import sys
 import argparse
 
 from models.cifar10.fp.resnet import ResNet18
 from models.cifar10.fp.mobilenetv2 import MobileNetV2
-from utils.utils import progress_bar
+# from utils.utils import progress_bar
 from utils.ptflops import get_model_complexity_info
 from wrapper.qcode_wrapper import replace_conv_recursively
 
@@ -28,8 +31,26 @@ parser.add_argument('--q-mode', choices=q_modes_choice, default='layer_wise',
                             ' (default: kernel-wise)')
 parser.add_argument('--quan-mode', type=str, default='Conv2dLSQ', 
                     help='corresponding for the quantize conv')
-
+parser.add_argument('--evaluate', default=False, action='store_true', 
+                    help='evaluate for model')
+parser.add_argument('--save', type=str, default='EXP', 
+                    help='path for saving trained models')
 args = parser.parse_args()
+
+args.save = 'wqjoint-search-{}-{}'.format(args.save, time.strftime("%Y%m%d-%H%M%S"))
+
+from tensorboardX import SummaryWriter
+writer_comment = args.save 
+log_dir = '{}/{}'.format('logger', args.save)
+writer = SummaryWriter(log_dir = log_dir, comment=writer_comment)
+
+log_format = '%(asctime)s %(message)s'
+logging.basicConfig(stream=sys.stdout, level=logging.INFO,
+    format=log_format, datefmt='%m/%d %I:%M:%S %p')
+
+fh = logging.FileHandler(os.path.join('{}/log.txt'.format(log_dir)))
+fh.setFormatter(logging.Formatter(log_format))
+logging.getLogger().addHandler(fh)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 best_acc = 0  # best test accuracy
@@ -73,8 +94,6 @@ print('==> Building model..')
 # net = MobileNet()
 net = MobileNetV2()
 
-flops, params = get_model_complexity_info(net, (3,32,32))
-print('the total flops of mobilenetv2 is : {} and whole params is : {}'.format(flops, params)) 
 # net = DPN92()
 # net = ShuffleNetG2()
 # net = SENet18()
@@ -87,14 +106,25 @@ if device == 'cuda':
     net = torch.nn.DataParallel(net)
     cudnn.benchmark = True
 
-if args.resume:
-    # Load checkpoint.
-    print('==> Resuming from checkpoint..')
-    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load('./checkpoint/mobilenet-ckpt.pth')
-    net.load_state_dict(checkpoint['net'])
+# Load checkpoint.
+print('==> Resuming from checkpoint..')
+assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
+checkpoint = torch.load('./checkpoint/mobilenet-ckpt.pth')
+net.load_state_dict(checkpoint['net'])
 
 net = replace_conv_recursively(net, args.quan_mode, args)
+
+if args.resume:
+    # Load checkpoint.
+    print('==> Resuming from Quantized checkpoint..')
+    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
+    checkpoint = torch.load('./checkpoint/mobilenet-{}-ckpt.pth'.format(args.quan_mode[-3:]))
+    net.load_state_dict(checkpoint['net'])
+    best_acc = checkpoint['acc']
+    start_epoch = checkpoint['epoch']
+
+flops, params = get_model_complexity_info(net, (3,32,32))
+print('the total flops of mobilenetv2 is : {} and whole params is : {}'.format(flops, params)) 
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=args.lr,
@@ -122,8 +152,8 @@ def train(epoch):
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
 
-        progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                     % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        # progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+        #              % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
 
 def test(epoch):
@@ -143,13 +173,17 @@ def test(epoch):
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
 
-            progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                         % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
+            # progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+            #              % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
     # Save checkpoint.
     acc = 100.*correct/total
+    logging.info('the test acc is : {}'.format(acc))
     if acc > best_acc:
-        print('Saving..')
+        logging.info('Saving..')
+        if args.quan_mode == 'Conv2dDPQ':
+            flops, params = get_model_complexity_info(net, (3,32,32))
+            logging.info('the total flops of mobilenetv2 is : {} and whole params is : {}'.format(flops, params)) 
         state = {
             'net': net.state_dict(),
             'acc': acc,
@@ -161,7 +195,12 @@ def test(epoch):
         best_acc = acc
 
 
-for epoch in range(start_epoch, start_epoch+200):
-    train(epoch)
-    test(epoch)
-    scheduler.step()
+if args.evaluate:
+    test(start_epoch)
+else:
+    for epoch in range(start_epoch, start_epoch+200):
+        train(epoch)
+        test(epoch)
+        scheduler.step()
+
+    logging.info('after {} train for quantization, the best acc1 is {} '.format(args.quan_mode[-3:], best_acc))

@@ -41,10 +41,6 @@ def replace_conv(conv_ori, conv_name, act_name, args, **kwargs):
             is_first = False
             return conv_ori
         if conv_name == 'Conv2dDPQ':
-            # if is_first:
-            #     is_first = False
-            #     return conv_ori
-            # else:
             m = conv_ori
             has_bias = m.bias is not None
             qmode = 2 if args.q_mode == 'kernel_wise' else 1

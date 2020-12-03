@@ -112,6 +112,7 @@ class Conv2dDPQ(nn.Conv2d):
 
     def get_quan_filters(self, filters):
         
+        # import ipdb; ipdb.set_trace()
         if self.training and self.init_state[self.index] == 0:
             Qp = 2 ** (self.nbits - 1) - 1
             self.alpha[self.index].data.copy_(2 * filters.abs().mean() / math.sqrt(Qp))
@@ -137,6 +138,7 @@ class Conv2dDPQ(nn.Conv2d):
             x = self.act_dpq(x)
         
         wq = self.get_quan_filters(self.weight)
+        # import ipdb; ipdb.set_trace()
         return F.conv2d(x, wq, self.bias, self.stride, self.padding, self.dilation, self.groups)
 
 class linearDPQ(nn.Linear):
@@ -197,7 +199,7 @@ class ActDPQ(nn.Module):
         if self.alpha[self.index] is None:
             return x
         
-        if self.init_state[self.index] == 0:
+        if self.training and self.init_state[self.index] == 0:
             Qp = 2 ** (self.nbits - 1) - 1
             self.alpha[self.index].data.copy_(2 * x.abs().mean() / math.sqrt(Qp))
             self.xmax[self.index].data.copy_(self.alpha[self.index] * Qp)

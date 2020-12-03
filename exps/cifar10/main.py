@@ -9,6 +9,9 @@ import torchvision
 import torchvision.transforms as transforms
 
 import os
+import time
+import logging
+import sys
 import argparse
 
 from models.cifar10.fp.resnet import ResNet18
@@ -20,7 +23,26 @@ parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--resume', '-r', action='store_true',
                     help='resume from checkpoint')
+parser.add_argument('--evaluate', default=False, action='store_true', 
+                    help='evaluate for model')
+parser.add_argument('--save', type=str, default='EXP', 
+                    help='path for saving trained models')
 args = parser.parse_args()
+
+args.save = 'wqjoint-search-{}-{}'.format(args.save, time.strftime("%Y%m%d-%H%M%S"))
+
+from tensorboardX import SummaryWriter
+writer_comment = args.save 
+log_dir = '{}/{}'.format('logger', args.save)
+writer = SummaryWriter(log_dir = log_dir, comment=writer_comment)
+
+log_format = '%(asctime)s %(message)s'
+logging.basicConfig(stream=sys.stdout, level=logging.INFO,
+    format=log_format, datefmt='%m/%d %I:%M:%S %p')
+
+fh = logging.FileHandler(os.path.join('{}/log.txt'.format(log_dir)))
+fh.setFormatter(logging.Formatter(log_format))
+logging.getLogger().addHandler(fh)
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 best_acc = 0  # best test accuracy
@@ -82,7 +104,7 @@ if args.resume:
     # Load checkpoint.
     print('==> Resuming from checkpoint..')
     assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load('./checkpoint/ckpt.pth')
+    checkpoint = torch.load('./checkpoint/mobilenet-LSQ-ckpt.pth')
     net.load_state_dict(checkpoint['net'])
     best_acc = checkpoint['acc']
     start_epoch = checkpoint['epoch']
@@ -116,7 +138,6 @@ def train(epoch):
         progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
                      % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
 
-
 def test(epoch):
     global best_acc
     net.eval()
@@ -148,11 +169,13 @@ def test(epoch):
         }
         if not os.path.isdir('checkpoint'):
             os.mkdir('checkpoint')
-        torch.save(state, './checkpoint/mobilenet-ckpt.pth')
+        torch.save(state, './checkpoint/mobilenet-lr-{}-ckpt.pth'.format(args.lr))
         best_acc = acc
 
-
-for epoch in range(start_epoch, start_epoch+200):
-    train(epoch)
-    test(epoch)
-    scheduler.step()
+if args.evaluate:
+    test(start_epoch)
+else:
+    for epoch in range(start_epoch, start_epoch+200):
+        train(epoch)
+        test(epoch)
+        scheduler.step()
