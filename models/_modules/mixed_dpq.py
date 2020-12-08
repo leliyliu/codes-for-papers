@@ -96,27 +96,23 @@ class Conv2dDPQ(nn.Conv2d):
 
     def get_nbits(self):
         abits = self.act_dpq.get_nbits()
-        # print('the xmax is : {} and the alpha is : {} '.format(self.xmax.data, self.alpha.data))
         self.xmax[self.index].data.copy_(self.xmax[self.index].clamp(self.qmin, self.qmax))
         self.alpha[self.index].data.copy_(self.alpha[self.index].clamp(self.dmin, self.dmax))
-        # print('after clamp, the result is :')
-        # print('the xmax is : {} and the alpha is : {} '.format(self.xmax.data, self.alpha.data))
         if self.sign:
             nbits = (torch.log(self.xmax[self.index]/self.alpha[self.index] + 1) / math.log(2) + 1).ceil()
         else:
             nbits = (torch.log(self.xmax[self.index]/self.alpha[self.index] + 1) / math.log(2)).ceil()
 
-        # print('the nbits for weight is  : {}'.format(nbits))
         self.nbits = int(nbits.item())
         return abits, nbits
 
     def get_quan_filters(self, filters):
-        
-        # import ipdb; ipdb.set_trace()
         if self.training and self.init_state[self.index] == 0:
             Qp = 2 ** (self.nbits - 1) - 1
-            self.alpha[self.index].data.copy_(2 * filters.abs().mean() / math.sqrt(Qp))
-            self.xmax[self.index].data.copy_(self.alpha[self.index] * Qp)
+            self.xmax[self.index].data.copy_(filters.abs().max())
+            self.alpha[self.index].data.copy_(self.xmax[self.index] / Qp)
+            # self.alpha[self.index].data.copy_(2 * filters.abs().mean() / math.sqrt(Qp))
+            # self.xmax[self.index].data.copy_(self.alpha[self.index] * Qp)
             self.init_state[self.index].fill_(1)
 
         self.xmax[self.index].data.copy_(self.xmax[self.index].clamp(self.qmin, self.qmax))
@@ -138,7 +134,6 @@ class Conv2dDPQ(nn.Conv2d):
             x = self.act_dpq(x)
         
         wq = self.get_quan_filters(self.weight)
-        # import ipdb; ipdb.set_trace()
         return F.conv2d(x, wq, self.bias, self.stride, self.padding, self.dilation, self.groups)
 
 class linearDPQ(nn.Linear):
@@ -201,8 +196,10 @@ class ActDPQ(nn.Module):
         
         if self.training and self.init_state[self.index] == 0:
             Qp = 2 ** (self.nbits - 1) - 1
-            self.alpha[self.index].data.copy_(2 * x.abs().mean() / math.sqrt(Qp))
-            self.xmax[self.index].data.copy_(self.alpha[self.index] * Qp)
+            self.xmax[self.index].data.copy_(x.abs().max())
+            self.alpha[self.index].data.copy_(self.xmax[self.index] / Qp)
+            # self.alpha[self.index].data.copy_(2 * x.abs().mean() / math.sqrt(Qp))
+            # self.xmax[self.index].data.copy_(self.alpha[self.index] * Qp)
             self.init_state[self.index].fill_(1)
 
         self.xmax[self.index].data.copy_(self.xmax[self.index].clamp(self.qmin, self.qmax))

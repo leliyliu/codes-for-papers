@@ -37,7 +37,7 @@ parser.add_argument('--save', type=str, default='EXP',
                     help='path for saving trained models')
 args = parser.parse_args()
 
-args.save = 'wqjoint-search-{}-{}'.format(args.save, time.strftime("%Y%m%d-%H%M%S"))
+args.save = 'quan{}-mobilenet-{}-{}'.format(args.quan_mode[-3:], args.save, time.strftime("%Y%m%d-%H%M%S"))
 
 from tensorboardX import SummaryWriter
 writer_comment = args.save 
@@ -123,8 +123,9 @@ if args.resume:
     best_acc = checkpoint['acc']
     start_epoch = checkpoint['epoch']
 
-flops, params = get_model_complexity_info(net, (3,32,32))
-print('the total flops of mobilenetv2 is : {} and whole params is : {}'.format(flops, params)) 
+if args.quan_mode != 'Conv2dDPQ':
+    flops, params = get_model_complexity_info(net, (3,32,32))
+    print('the total flops of mobilenetv2 is : {} and whole params is : {}'.format(flops, params)) 
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=args.lr,
@@ -134,7 +135,7 @@ scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
 # Training
 def train(epoch):
-    print('\nEpoch: %d' % epoch)
+    logging.info('\nEpoch: %d' % epoch)
     net.train()
     train_loss = 0
     correct = 0

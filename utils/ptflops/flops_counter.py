@@ -491,6 +491,7 @@ def conv_dpq_flops_counter_hook(conv_module, input, output):
     out_channels = conv_module.out_channels
     groups = conv_module.groups
 
+    conv_module.get_nbits()
     filters_per_channel = out_channels // groups
     conv_per_position_flops = int(np.prod(kernel_dims)) * in_channels * filters_per_channel
 
