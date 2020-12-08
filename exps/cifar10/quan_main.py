@@ -13,15 +13,17 @@ import time
 import logging
 import sys
 import argparse
+import numpy as np
+import random
 
-from models.cifar10.fp.resnet import ResNet18
-from models.cifar10.fp.mobilenetv2 import MobileNetV2
-# from utils.utils import progress_bar
+import models.cifar10.fp as models
 from utils.ptflops import get_model_complexity_info
 from wrapper.qcode_wrapper import replace_conv_recursively
 
 q_modes_choice = sorted(['kernel_wise', 'layer_wise'])
-parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
+parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Quantization')
+parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet18',
+                    help='model architecture (default: resnet18)')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--resume', '-r', action='store_true',
                     help='resume from checkpoint')
@@ -35,9 +37,15 @@ parser.add_argument('--evaluate', default=False, action='store_true',
                     help='evaluate for model')
 parser.add_argument('--save', type=str, default='EXP', 
                     help='path for saving trained models')
+parser.add_argument('--manual-seed', default=2, type=int, help='random seed is settled')
 args = parser.parse_args()
 
-args.save = 'quan{}-mobilenet-{}-{}'.format(args.quan_mode[-3:], args.save, time.strftime("%Y%m%d-%H%M%S"))
+torch.manual_seed(args.manual_seed)
+torch.cuda.manual_seed_all(args.manual_seed)
+np.random.seed(args.manual_seed)
+random.seed(args.manual_seed)  # 设置随机种子
+
+args.save = 'quan{}-{}-{}-{}'.format(args.quan_mode[-3:], args.arch, args.save, time.strftime("%Y%m%d-%H%M%S"))
 
 from tensorboardX import SummaryWriter
 writer_comment = args.save 
@@ -92,7 +100,8 @@ print('==> Building model..')
 # net = DenseNet121()
 # net = ResNeXt29_2x64d()
 # net = MobileNet()
-net = MobileNetV2()
+# net = MobileNetV2()
+net = models.__dict__[args.arch]()
 
 # net = DPN92()
 # net = ShuffleNetG2()
@@ -109,7 +118,7 @@ if device == 'cuda':
 # Load checkpoint.
 print('==> Resuming from checkpoint..')
 assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-checkpoint = torch.load('./checkpoint/mobilenet-ckpt.pth')
+checkpoint = torch.load('./checkpoint/{}-ckpt.pth'.format(args.arch))
 net.load_state_dict(checkpoint['net'])
 
 net = replace_conv_recursively(net, args.quan_mode, args)
@@ -118,7 +127,7 @@ if args.resume:
     # Load checkpoint.
     print('==> Resuming from Quantized checkpoint..')
     assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load('./checkpoint/mobilenet-{}-ckpt.pth'.format(args.quan_mode[-3:]))
+    checkpoint = torch.load('./checkpoint/{}-{}-ckpt.pth'.format(args.arch, args.quan_mode[-3:]))
     net.load_state_dict(checkpoint['net'])
     best_acc = checkpoint['acc']
     start_epoch = checkpoint['epoch']
@@ -184,7 +193,7 @@ def test(epoch):
         logging.info('Saving..')
         if args.quan_mode == 'Conv2dDPQ':
             flops, params = get_model_complexity_info(net, (3,32,32))
-            logging.info('the total flops of mobilenetv2 is : {} and whole params is : {}'.format(flops, params)) 
+            logging.info('the total flops of {} is : {} and whole params is : {}'.format(args.arch, flops, params)) 
         state = {
             'net': net.state_dict(),
             'acc': acc,
@@ -192,7 +201,7 @@ def test(epoch):
         }
         if not os.path.isdir('checkpoint'):
             os.mkdir('checkpoint')
-        torch.save(state, './checkpoint/mobilenet-{}-ckpt.pth'.format(args.quan_mode[-3:]))
+        torch.save(state, './checkpoint/{}-{}-ckpt.pth'.format(args.arch, args.quan_mode[-3:]))
         best_acc = acc
 
 
@@ -204,4 +213,4 @@ else:
         test(epoch)
         scheduler.step()
 
-    logging.info('after {} train for quantization, the best acc1 is {} '.format(args.quan_mode[-3:], best_acc))
+    logging.info('after {} train for quantization, the best acc1 is {} '.format(args.quan_mode[-4:], best_acc))

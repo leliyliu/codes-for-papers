@@ -7,6 +7,7 @@ from .ttq import *
 from .cluster_quant import *
 from .bwn import *
 from .lsq import *
+from .hlsq import *
 from .llsq import *
 from .svd import *
 from .convbn_fold import *
