@@ -6,6 +6,7 @@ Copyright (C) 2019 Sovrasov V. - All Rights Reserved
  * this file. If not visit https://opensource.org/licenses/MIT
 '''
 
+from models._modules.hlsq import Conv2dHSQ
 from models._modules.mixed_dpq import Conv2dDPQ
 from models._modules.lsq import Conv2dLSQ
 import sys
@@ -632,6 +633,7 @@ MODULES_MAPPING = {
     my_nn.Conv2dSQ: conv_sq_flops_counter_hook,
     my_nn.Conv2dLSQ: conv_lsq_flops_counter_hook,
     my_nn.Conv2dDPQ: conv_dpq_flops_counter_hook,
+    my_nn.Conv2dHSQ: conv_lsq_flops_counter_hook,
     nn.Conv3d: conv_flops_counter_hook,
     # activations
     nn.ReLU: relu_flops_counter_hook,

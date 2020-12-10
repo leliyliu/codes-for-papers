@@ -50,11 +50,11 @@ class MobileNetV2(nn.Module):
     def __init__(self, num_classes=10):
         super(MobileNetV2, self).__init__()
         # NOTE: change conv1 stride 2 -> 1 for CIFAR10
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(32)
+        self.first_conv = nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1, bias=False)
+        self.first_bn = nn.BatchNorm2d(32)
         self.layers = self._make_layers(in_planes=32)
-        self.conv2 = nn.Conv2d(320, 1280, kernel_size=1, stride=1, padding=0, bias=False)
-        self.bn2 = nn.BatchNorm2d(1280)
+        self.last_conv = nn.Conv2d(320, 1280, kernel_size=1, stride=1, padding=0, bias=False)
+        self.last_bn = nn.BatchNorm2d(1280)
         self.linear = nn.Linear(1280, num_classes)
 
     def _make_layers(self, in_planes):
@@ -67,14 +67,20 @@ class MobileNetV2(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
-        out = self.layers(out)
-        out = F.relu(self.bn2(self.conv2(out)))
+        out = F.relu(self.first_bn(self.first_conv(x)))
+        features = []
+        for layer in self.layers:
+            if layer.conv2.stride == 2:
+                features = out 
+            out = layer(out)
+        # out = self.layers(out)
+        features.append(out)
+        out = F.relu(self.last_bn(self.last_conv(out)))
         # NOTE: change pooling kernel_size 7 -> 4 for CIFAR10
         out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
         out = self.linear(out)
-        return out
+        return features, out
 
 
 def test():

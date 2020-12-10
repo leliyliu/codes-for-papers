@@ -45,7 +45,7 @@ torch.cuda.manual_seed_all(args.manual_seed)
 np.random.seed(args.manual_seed)
 random.seed(args.manual_seed)  # 设置随机种子
 
-args.save = 'quan{}-{}-{}-{}'.format(args.quan_mode[-3:], args.arch, args.save, time.strftime("%Y%m%d-%H%M%S"))
+args.save = 'cifar10-{}-{}-{}-{}'.format(args.quan_mode[-3:], args.arch, args.save, time.strftime("%Y%m%d-%H%M%S"))
 
 from tensorboardX import SummaryWriter
 writer_comment = args.save 

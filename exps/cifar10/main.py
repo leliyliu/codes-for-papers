@@ -16,7 +16,6 @@ import argparse
 import numpy as np
 import random
 
-from models.cifar10.fp.resnet import ResNet18
 import models.cifar10.fp as models
 from utils.utils import progress_bar
 from utils.ptflops import get_model_complexity_info
@@ -136,7 +135,7 @@ def train(epoch):
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
-        outputs = net(inputs)
+        _, outputs = net(inputs)
         loss = criterion(outputs, targets)
         loss.backward()
         optimizer.step()
@@ -158,7 +157,7 @@ def test(epoch):
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(testloader):
             inputs, targets = inputs.to(device), targets.to(device)
-            outputs = net(inputs)
+            _, outputs = net(inputs)
             loss = criterion(outputs, targets)
 
             test_loss += loss.item()

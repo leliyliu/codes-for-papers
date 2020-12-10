@@ -102,7 +102,6 @@ class LinearHSQ(_LinearQ):
         Qp = 2 ** (self.nbits - 1) - 1
         if self.training and self.init_state == 0:
             self.alpha.data.copy_(2 * self.weight.abs().mean() / math.sqrt(Qp))
-            # self.alpha.data.copy_(self.weight.abs().max() / 2 ** (self.nbits - 1))
             self.init_state.fill_(1)
         g = 1.0 / math.sqrt(self.weight.numel() * Qp)
 

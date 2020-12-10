@@ -10,6 +10,8 @@ import shutil
 import time
 import warnings
 import PIL
+import logging
+import sys
 
 import torch
 import torch.nn as nn
@@ -26,7 +28,10 @@ import torchvision.models as models
 
 from efficientnet_pytorch import EfficientNet
 import models.imagenet.fp as localmodels
+from utils.ptflops import get_model_complexity_info
+from wrapper.qcode_wrapper import replace_conv_recursively
 
+q_modes_choice = sorted(['kernel_wise', 'layer_wise'])
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('data', metavar='DIR',
                     help='path to dataset')
@@ -66,10 +71,19 @@ parser.add_argument('--dist-url', default='tcp://224.66.41.62:23456', type=str,
                     help='url used to set up distributed training')
 parser.add_argument('--dist-backend', default='nccl', type=str,
                     help='distributed backend')
-parser.add_argument('--seed', default=None, type=int,
+parser.add_argument('--seed', default=2, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('-g', '--gpu', default=None, type=int,
                     help='GPU id to use.')
+parser.add_argument('--q-mode', choices=q_modes_choice, default='layer_wise',
+                    help='Quantization modes: ' +
+                            ' | '.join(q_modes_choice) +
+                            ' (default: kernel-wise)')
+parser.add_argument('--local_rank', default=-1,type=int, help='node rank for distributed training')
+parser.add_argument('--quan-mode', type=str, default='Conv2dLSQ', 
+                    help='corresponding for the quantize conv')
+parser.add_argument('--save', type=str, default='EXP', 
+                    help='path for saving trained models')
 parser.add_argument('--image_size', default=224, type=int,
                     help='image size')
 parser.add_argument('--advprop', default=False, action='store_true',
@@ -82,9 +96,23 @@ parser.add_argument('--multiprocessing-distributed', action='store_true',
 
 best_acc1 = 0
 
-
 def main():
     args = parser.parse_args()
+
+    args.save = 'imagenet-{}-{}-{}-{}'.format(args.quan_mode[-3:], args.arch, args.save, time.strftime("%Y%m%d-%H%M%S"))
+
+    from tensorboardX import SummaryWriter
+    writer_comment = args.save 
+    log_dir = '{}/{}'.format('logger', args.save)
+    args.writer = SummaryWriter(log_dir = log_dir, comment=writer_comment)
+
+    log_format = '%(asctime)s %(message)s'
+    logging.basicConfig(stream=sys.stdout, level=logging.INFO,
+        format=log_format, datefmt='%m/%d %I:%M:%S %p')
+
+    fh = logging.FileHandler(os.path.join('{}/log.txt'.format(log_dir)))
+    fh.setFormatter(logging.Formatter(log_format))
+    logging.getLogger().addHandler(fh)
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -103,9 +131,13 @@ def main():
     if args.dist_url == "env://" and args.world_size == -1:
         args.world_size = int(os.environ["WORLD_SIZE"])
 
+    logging.info('the number of world size is: {}'.format(args.world_size))
+    logging.info('args = %s', args)
+
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
 
     ngpus_per_node = torch.cuda.device_count()
+
     if args.multiprocessing_distributed:
         # Since we have ngpus_per_node processes per node, the total world_size
         # needs to be adjusted accordingly
@@ -160,6 +192,8 @@ def main_worker(gpu, ngpus_per_node, args):
         else:
             print("=> creating model '{}'".format(args.arch))
             model = models.__dict__[args.arch]()
+
+    model = replace_conv_recursively(model, args.quan_mode, args)
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -273,15 +307,35 @@ def main_worker(gpu, ngpus_per_node, args):
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch, args)
+        train_loss, train_acc1, train_acc5 = train(train_loader, model, criterion, optimizer, epoch, args)
 
         # evaluate on validation set
-        acc1 = validate(val_loader, model, criterion, args)
-
-        # remember best acc@1 and save checkpoint
-        is_best = acc1 > best_acc1
-        best_acc1 = max(acc1, best_acc1)
-
+        validate_loss, validate_acc1, validate_acc5 = validate(val_loader, model, criterion, args)
+        
+        if not (args.distributed and args.local_rank != 0):
+            logging.info('the soft train loss is : {} ; For Train !  the top1 accuracy is : {} ; then the top5 accuracy is : {}'.format(train_loss, train_acc1, train_acc5))
+            logging.info('the validate loss is : {} ; For Validate !  the top1 accuracy is : {} ; then the top5 accuracy is : {}'.format(validate_loss, validate_acc1, validate_acc5))
+            args.writer.add_scalars('Quantization-Loss/Training-Validate',{
+                            'train_loss': train_loss,
+                            'validate_loss': validate_loss
+                        }, epoch + 1)
+            args.writer.add_scalars('Quantization-Top1/Training-Validate',{
+                'train_acc1': train_acc1,
+                'validate_acc1': validate_acc1
+            }, epoch + 1)
+            args.writer.add_scalars('Quantization-Top5/Training-Validate',{
+                'train_acc5': train_acc5,
+                'validate_acc5': validate_acc5
+            }, epoch + 1)
+            args.writer.add_scalars('Learning-Rate-For-Quan', {
+                'basic optimizer': optimizer.state_dict()['param_groups'][0]['lr']
+            }, epoch + 1)
+        is_best = False
+        if validate_acc1 > best_acc1:
+            best_acc1 = validate_acc1
+            is_best = True
+            logging.info('the best model top1 is : {} and its epoch is {} !'.format(best_acc1, epoch))
+            # remember best acc@1 and save checkpoint
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0):
             save_checkpoint({
@@ -289,8 +343,8 @@ def main_worker(gpu, ngpus_per_node, args):
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
                 'best_acc1': best_acc1,
-                'optimizer' : optimizer.state_dict(),
-            }, is_best)
+                'optimizer': optimizer.state_dict(),
+            }, is_best, save='logger/{}-{}-models'.format(args.arch, args.quan_mode[-3:]))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -335,6 +389,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         if i % args.print_freq == 0:
             progress.print(i)
+        
+    return losses.avg, top1.avg, top5.avg
 
 
 def validate(val_loader, model, criterion, args):
@@ -373,16 +429,20 @@ def validate(val_loader, model, criterion, args):
                 progress.print(i)
 
         # TODO: this should also be done with the ProgressMeter
-        print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
+        logging.info(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
               .format(top1=top1, top5=top5))
 
-    return top1.avg
+    return losses.avg, top1.avg, top5.avg
 
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+def save_checkpoint(state, is_best, save, filename='checkpoint.pth.tar'):
+    if not os.path.exists(save):
+        os.makedirs(save)
+    filename = os.path.join(save, 'checkpoint.pth.tar')
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, 'model_best.pth.tar')
+        best_filename = os.path.join(save, 'model_best.pth.tar')
+        shutil.copyfile(filename, best_filename)
 
 
 class AverageMeter(object):
@@ -418,7 +478,7 @@ class ProgressMeter(object):
     def print(self, batch):
         entries = [self.prefix + self.batch_fmtstr.format(batch)]
         entries += [str(meter) for meter in self.meters]
-        print('\t'.join(entries))
+        logging.info('\t'.join(entries))
 
     def _get_batch_fmtstr(self, num_batches):
         num_digits = len(str(num_batches // 1))

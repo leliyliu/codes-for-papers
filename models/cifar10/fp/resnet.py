@@ -93,15 +93,33 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        features = []
         out = F.relu(self.bn1(self.conv1(x)))
-        out = self.layer1(out)
-        out = self.layer2(out)
-        out = self.layer3(out)
-        out = self.layer4(out)
+        for layer in self.layer1:
+            if layer.conv1.stride == 2:
+                features.append(out)
+            out = layer(out)
+        # out = self.layer1(out)
+        for layer in self.layer2:
+            if layer.conv1.stride == 2:
+                features.append(out)
+            out = layer(out)
+        # out = self.layer2(out)
+        for layer in self.layer3:
+            if layer.conv1.stride == 2:
+                features.append(out)
+            out = layer(out)
+        # out = self.layer3(out)
+        for layer in self.layer4:
+            if layer.conv1.stride == 2:
+                features.append(out)
+            out = layer(out)
+        # out = self.layer4(out)
+        features.append(out)
         out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
         out = self.linear(out)
-        return out
+        return features, out
 
 
 def ResNet18():
