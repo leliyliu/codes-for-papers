@@ -11,24 +11,21 @@ import sys
 import argparse
 import time
 import logging
+import random
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torchvision
-import torchvision.transforms as transforms
-
-from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from utils.network import save_checkpoint
 from exps.cifar100.run_tool import train, eval_training, get_network, get_training_dataloader, get_test_dataloader, WarmUpLR
+from wrapper.qcode_wrapper import replace_conv_recursively
 from utils.ptflops import get_model_complexity_info
 
-
 if __name__ == '__main__':
-
+    q_modes_choice = sorted(['kernel_wise', 'layer_wise'])
     parser = argparse.ArgumentParser()
     parser.add_argument('-n', '--net', type=str, default='mobilenetv2', help='net type')
     parser.add_argument('-g', '--gpu', action='store_true', default=False, help='use gpu or not')
@@ -42,16 +39,32 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', default=200, type=int, help='training epochs')
     parser.add_argument('--milestones', default=[60, 120, 180], nargs='+', type=int,
                     help='milestones of MultiStepLR')
+    parser.add_argument('--manual-seed', default=2, type=int, help='random seed is settled')
     parser.add_argument('--checkpoint', type=str, default='checkpoint')
     parser.add_argument('--log-dir', default='logger', type=str)
     parser.add_argument('--save', default='EXP', type=str, help='save for the tensor log')
-    parser.add_argument('--save_model', type=str, default='cifar100-mobilenetv2-models/model_best.pth.tar')
+    parser.add_argument('--save-model', type=str, default='cifar100-mobilenetv2-HSQ-models/model_best.pth.tar')
+    parser.add_argument('--pretrained', default=False, action='store_true', help='load pretrained model')
+    parser.add_argument('--quan-mode', type=str, default='Conv2dLSQ', 
+                    help='corresponding for the quantize conv')
+    parser.add_argument('--q-mode', choices=q_modes_choice, default='layer_wise',
+                    help='Quantization modes: ' + ' | '.join(q_modes_choice) +
+                            ' (default: kernel-wise)')
     args = parser.parse_args()
 
+    torch.manual_seed(args.manual_seed)
+    torch.cuda.manual_seed_all(args.manual_seed)
+    np.random.seed(args.manual_seed)
+    random.seed(args.manual_seed)  # 设置随机种子
     net = get_network(args)
+    if args.pretrained:
+        checkpoint = torch.load(os.path.join(args.log_dir, '{}-{}-models/model_best.pth.tar'.format('cifar100', args.net)))
+        net.load_state_dict(checkpoint['net'])
+
+    replace_conv_recursively(net, args.quan_mode, args)
 
     flops, params = get_model_complexity_info(net, (3,32,32), print_per_layer_stat=False)
-    logging.info('the model for train(fp) flops is {} and its params is {} '.format(flops, params))
+    logging.info('the model after quantized flops is {} and its params is {} '.format(flops, params))
 
     CIFAR100_TRAIN_MEAN = (0.5070751592371323, 0.48654887331495095, 0.4409178433670343)
     CIFAR100_TRAIN_STD = (0.2673342858792401, 0.2564384629170883, 0.27615047132568404)
@@ -84,7 +97,7 @@ if __name__ == '__main__':
 
     #since tensorboard can't overwrite old values
     #so the only way is to create a new tensorboard log
-    args.save = 'cifar100-{}-{}-{}'.format(args.net, args.save, time.strftime("%Y%m%d-%H%M%S"))
+    args.save = 'cifar100-{}-{}-{}-{}'.format(args.net, args.save, args.quan_mode[-3:], time.strftime("%Y%m%d-%H%M%S"))
     writer = SummaryWriter(log_dir=os.path.join(
             args.log_dir, args.save))
     input_tensor = torch.Tensor(1, 3, 32, 32).cuda()
@@ -98,6 +111,8 @@ if __name__ == '__main__':
     fh.setFormatter(logging.Formatter(log_format))
     logging.getLogger().addHandler(fh)
 
+    logging.info('args = %s', args)
+
     best_acc = 0.0
     args.start_epoch = 0
     if args.resume:
@@ -105,7 +120,7 @@ if __name__ == '__main__':
             logging.info("=> loading checkpoint '{}/{}'".format(args.log_dir, args.save_model))
             checkpoint = torch.load(os.path.join(args.log_dir, args.save_model))
             logging.info('load best training file to test acc...')
-            net.load_state_dict(torch.load(checkpoint['net']))
+            net.load_state_dict(checkpoint['net'])
             logging.info('best acc is {:0.2f}'.format(checkpoint['acc']))
             best_acc = checkpoint['acc']
             args.start_epoch = checkpoint['epoch']
@@ -130,7 +145,7 @@ if __name__ == '__main__':
             'net': net.state_dict(),
             'acc': best_acc,
             'optimizer': optimizer.state_dict(),
-        }, is_best, save='logger/{}-{}-models'.format('cifar100', args.net))
+        }, is_best, save='logger/{}-{}-{}-models'.format('cifar100', args.net, args.quan_mode[-3:]))
 
     logging.info('the final best acc is {}'.format(best_acc))
     writer.close()

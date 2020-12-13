@@ -17,3 +17,4 @@ from .squeezenet import *
 from .vgg import *
 from .wideresidual import *
 from .xception import *
+from .mobilenetv3 import *

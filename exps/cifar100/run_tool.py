@@ -98,6 +98,10 @@ def get_network(args):
         net = models.seresnet152()
     elif args.net == 'wideresnet':
         net = models.wideresnet()
+    elif args.net == 'mobilenetv3_large':
+        net = models.mobilenetv3_large()
+    elif args.net == 'mobilenetv3_small':
+        net = models.mobilenetv3_small()
 
     else:
         print('the network name you have entered is not supported yet')
@@ -213,7 +217,7 @@ def train(net, train_loader, args, optimizer, epoch, writer, warmup_scheduler, l
 
         n_iter = (epoch - 1) * len(train_loader) + batch_index + 1
 
-        last_layer = list(net.children())[-1]
+        # last_layer = list(net.children())[-1]
         # for name, para in last_layer.named_parameters():
         #     if 'weight' in name:
         #         writer.add_scalar('LastLayerGradients/grad_norm2_weights', para.grad.norm(), n_iter)
@@ -221,7 +225,7 @@ def train(net, train_loader, args, optimizer, epoch, writer, warmup_scheduler, l
         #         writer.add_scalar('LastLayerGradients/grad_norm2_bias', para.grad.norm(), n_iter)
         if batch_index % args.print_freq == 0:
             logging.info('Training Epoch: {epoch} [{trained_samples}/{total_samples}]\tLoss: {:0.4f}\tLR: {:0.6f}'.format(
-                loss.item(),
+                loss.item() / args.print_freq,
                 optimizer.param_groups[0]['lr'],
                 epoch=epoch,
                 trained_samples=batch_index * args.batch_size + len(images),
@@ -262,13 +266,13 @@ def eval_training(net, test_loader, args, writer, loss_function, epoch=0, tb=Tru
         correct += preds.eq(labels).sum()
 
     finish = time.time()
-    if args.gpu:
-        logging.info('GPU INFO.....')
-        logging.info(torch.cuda.memory_summary())
+    # if args.gpu:
+        # logging.info('GPU INFO.....')
+        # logging.info(torch.cuda.memory_summary())
     logging.info('Evaluating Network.....')
-    logging.info('Test set: Average loss: {:.4f}, Accuracy: {:.4f}, Time consumed:{:.2f}s \n'.format(
+    logging.info('Test set: Average loss: {:.4f}, Accuracy: {:.2f}, Time consumed:{:.2f}s \n'.format(
         test_loss / len(test_loader.dataset),
-        correct.float() / len(test_loader.dataset),
+        correct.float() / len(test_loader.dataset) * 100,
         finish - start
     ))
 
@@ -277,4 +281,4 @@ def eval_training(net, test_loader, args, writer, loss_function, epoch=0, tb=Tru
         writer.add_scalar('Test/Average loss', test_loss / len(test_loader.dataset), epoch)
         writer.add_scalar('Test/Accuracy', correct.float() / len(test_loader.dataset), epoch)
 
-    return correct.float() / len(test_loader.dataset)
+    return 100 * correct.float() / len(test_loader.dataset)

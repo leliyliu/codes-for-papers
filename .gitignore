@@ -141,3 +141,5 @@ pretrained
 *.log 
 *.txt 
 *.out
+*EXP*
+logger
