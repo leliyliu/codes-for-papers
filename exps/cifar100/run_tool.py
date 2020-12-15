@@ -11,8 +11,32 @@ import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import _LRScheduler
+import torch.nn.functional as F
 
 import models.cifar100 as models 
+from utils.network import cross_entropy_loss_with_soft_target
+
+def add_weight_decay(model, weight_decay, skip_keys, grads):
+    decay, no_decay = [], []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        skip = True
+        for no_grad in grads:
+            if no_grad in name:
+                skip = False
+        if skip:
+            continue
+        added = False
+        for skip_key in skip_keys: # skip_keys -> means no decay 
+            if skip_key in name:
+                no_decay.append(param)
+                added = True
+                break
+        if not added:
+            decay.append(param)
+    
+    return [{'params': no_decay, 'weight_decay': 0.}, {'params': decay, 'weight_decay': weight_decay}]
 
 def get_network(args):
     """ return given network
@@ -197,6 +221,97 @@ class WarmUpLR(_LRScheduler):
         """
         return [base_lr * self.last_epoch / (self.total_iters + 1e-8) for base_lr in self.base_lrs]
 
+def feature_train(net, teacher_model, train_loader, args, optimizers, epoch, writer, loss_function):
+    start = time.time()
+    net.train()
+    teacher_model.train()
+    for batch_index, (images, labels) in enumerate(train_loader):
+
+        if args.gpu:
+            labels = labels.cuda()
+            images = images.cuda()
+
+        for optimizer in optimizers:
+            optimizer.zero_grad()
+        fake_features, _ = net(images)
+
+    
+        with torch.no_grad():
+            real_features, _ = teacher_model(images)
+            for i, feature in enumerate(real_features):
+                real_features[i] = feature.detach()
+
+        loss = 0 
+        for fake_feature, real_feature in zip(fake_features, real_features):
+                fake_feature, real_feature = fake_feature.reshape(fake_feature.shape[0], -1), real_feature.reshape(real_feature.shape[0], -1)
+                mse_loss = loss_function(fake_feature, real_feature)
+                loss = loss + mse_loss
+        loss.backward()
+        for optimizer in optimizers:
+            optimizer.step()
+
+        n_iter = (epoch - 1) * len(train_loader) + batch_index + 1
+
+        if batch_index % args.print_freq == 0:
+            logging.info('Initial-Training Epoch: {epoch} [{trained_samples}/{total_samples}]\tLoss: {:0.4f}\tLR: {:0.6f}'.format(
+                loss.item() / args.print_freq,
+                optimizers[0].param_groups[0]['lr'],
+                epoch=epoch,
+                trained_samples=batch_index * args.batch_size + len(images),
+                total_samples=len(train_loader.dataset)
+            ))
+
+        #update training loss for each iteration
+        writer.add_scalar('Initial-Train/loss', loss.item(), n_iter)
+
+    finish = time.time()
+
+    logging.info('epoch {} training time consumed: {:.2f}s'.format(epoch, finish - start))
+
+def kd_train(net, teacher_model, train_loader, args, optimizer, epoch, writer, warmup_scheduler, loss_function):
+    start = time.time()
+    net.train()
+    for batch_index, (images, labels) in enumerate(train_loader):
+        if epoch <= args.warm:
+            warmup_scheduler.step()
+
+        if args.gpu:
+            labels = labels.cuda()
+            images = images.cuda()
+
+        optimizer.zero_grad()
+        _, outputs = net(images)
+
+        with torch.no_grad():
+            _, soft_logits = teacher_model(images)
+            soft_logits = soft_logits.detach()
+            soft_label = F.softmax(soft_logits, dim=1) 
+        
+        kd_loss = cross_entropy_loss_with_soft_target(outputs, soft_label)
+        loss = loss_function(outputs, labels)
+        loss = loss + args.kd_ratio*kd_loss
+
+        loss.backward()
+        optimizer.step()
+
+        n_iter = (epoch - 1) * len(train_loader) + batch_index + 1
+
+        if batch_index % args.print_freq == 0:
+            logging.info('KD Training Epoch: {epoch} [{trained_samples}/{total_samples}]\tLoss: {:0.4f}\tLR: {:0.6f}'.format(
+                loss.item() / args.print_freq,
+                optimizer.param_groups[0]['lr'],
+                epoch=epoch,
+                trained_samples=batch_index * args.batch_size + len(images),
+                total_samples=len(train_loader.dataset)
+            ))
+
+        #update training loss for each iteration
+        writer.add_scalar('KD-Train/loss', loss.item(), n_iter)
+
+    finish = time.time()
+
+    logging.info('epoch {} training time consumed: {:.2f}s'.format(epoch, finish - start))
+
 def train(net, train_loader, args, optimizer, epoch, writer, warmup_scheduler, loss_function):
 
     start = time.time()
@@ -210,7 +325,7 @@ def train(net, train_loader, args, optimizer, epoch, writer, warmup_scheduler, l
             images = images.cuda()
 
         optimizer.zero_grad()
-        outputs = net(images)
+        _, outputs = net(images)
         loss = loss_function(outputs, labels)
         loss.backward()
         optimizer.step()
@@ -235,10 +350,10 @@ def train(net, train_loader, args, optimizer, epoch, writer, warmup_scheduler, l
         #update training loss for each iteration
         writer.add_scalar('Train/loss', loss.item(), n_iter)
 
-    for name, param in net.named_parameters():
-        layer, attr = os.path.splitext(name)
-        attr = attr[1:]
-        writer.add_histogram("{}/{}".format(layer, attr), param, epoch)
+    # for name, param in net.named_parameters():
+    #     layer, attr = os.path.splitext(name)
+    #     attr = attr[1:]
+    #     writer.add_histogram("{}/{}".format(layer, attr), param, epoch)
 
     finish = time.time()
 
@@ -259,7 +374,43 @@ def eval_training(net, test_loader, args, writer, loss_function, epoch=0, tb=Tru
             images = images.cuda()
             labels = labels.cuda()
 
-        outputs = net(images)
+        _, outputs = net(images)
+        loss = loss_function(outputs, labels)
+        test_loss += loss.item()
+        _, preds = outputs.max(1)
+        correct += preds.eq(labels).sum()
+
+    finish = time.time()
+    # if args.gpu:
+        # logging.info('GPU INFO.....')
+        # logging.info(torch.cuda.memory_summary())
+    logging.info('Evaluating Network.....')
+    logging.info('Test set: Average loss: {:.4f}, Accuracy: {:.2f}, Time consumed:{:.2f}s \n'.format(
+        test_loss / len(test_loader.dataset),
+        correct.float() / len(test_loader.dataset) * 100,
+        finish - start
+    ))
+
+    #add informations to tensorboard
+    if tb:
+        writer.add_scalar('Test/Average loss', test_loss / len(test_loader.dataset), epoch)
+        writer.add_scalar('Test/Accuracy', correct.float() / len(test_loader.dataset), epoch)
+
+    return 100 * correct.float() / len(test_loader.dataset)
+
+def validate(net ,test_loader, args, writer, loss_function, epoch=0, tb=True):
+    start = time.time()
+    net.eval()
+
+    test_loss = 0.0 # cost function error
+    correct = 0.0
+
+    for (images, labels) in test_loader:
+        if args.gpu:
+            images = images.cuda()
+            labels = labels.cuda()
+
+        _, outputs = net(images)
         loss = loss_function(outputs, labels)
         test_loss += loss.item()
         _, preds = outputs.max(1)

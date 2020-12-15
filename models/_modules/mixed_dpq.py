@@ -82,50 +82,46 @@ class Conv2dDPQ(nn.Conv2d):
         self.q_mode = mode
         self.sign = sign
         self.nbits = wbits 
-        self.act_dpq = ActDPQ(signed=True, nbits=abits)
+        self.act_dpq = ActDPQ(signed=False, nbits=abits)
         if self.q_mode == Qmodes.kernel_wise:
             self.alpha = Parameter(torch.Tensor(out_channels))
         else:
-            self.alpha = Parameter(torch.Tensor(3))
-        self.xmax = Parameter(torch.Tensor(3))
-        self.index = 0
+            self.alpha = Parameter(torch.Tensor(1))
+        self.xmax = Parameter(torch.Tensor(1))
         self.weight.requires_grad_(True)
         if bias:
             self.bias.requires_grad_(True)
-        self.register_buffer('init_state', torch.zeros(3))
+        self.register_buffer('init_state', torch.zeros(1))
 
     def get_nbits(self):
         abits = self.act_dpq.get_nbits()
-        self.xmax[self.index].data.copy_(self.xmax[self.index].clamp(self.qmin, self.qmax))
-        self.alpha[self.index].data.copy_(self.alpha[self.index].clamp(self.dmin, self.dmax))
+        xmax = self.xmax.abs().item()
+        alpha = self.alpha.abs().item()
         if self.sign:
-            nbits = (torch.log(self.xmax[self.index]/self.alpha[self.index] + 1) / math.log(2) + 1).ceil()
+            nbits = math.ceil(math.log(xmax/alpha + 1) / math.log(2) + 1)
         else:
-            nbits = (torch.log(self.xmax[self.index]/self.alpha[self.index] + 1) / math.log(2)).ceil()
+            nbits = math.cell(math.log(xmax/alpha + 1) / math.log(2))
 
-        self.nbits = int(nbits.item())
+        self.nbits = nbits
         return abits, nbits
 
     def get_quan_filters(self, filters):
-        if self.training and self.init_state[self.index] == 0:
+        if self.training and self.init_state == 0:
             Qp = 2 ** (self.nbits - 1) - 1
-            self.xmax[self.index].data.copy_(filters.abs().max())
-            self.alpha[self.index].data.copy_(self.xmax[self.index] / Qp)
+            self.xmax.data.copy_(filters.abs().max())
+            self.alpha.data.copy_(self.xmax / Qp)
             # self.alpha[self.index].data.copy_(2 * filters.abs().mean() / math.sqrt(Qp))
             # self.xmax[self.index].data.copy_(self.alpha[self.index] * Qp)
-            self.init_state[self.index].fill_(1)
+            self.init_state.fill_(1)
 
-        self.xmax[self.index].data.copy_(self.xmax[self.index].clamp(self.qmin, self.qmax))
-        self.alpha[self.index].data.copy_(self.alpha[self.index].clamp(self.dmin, self.dmax))
-        Qp = (self.xmax[self.index].detach()/self.alpha[self.index].detach()).item()
+        Qp = (self.xmax.detach()/self.alpha.detach()).abs().item()
         g = 1.0 / math.sqrt(filters.numel() * Qp)
-        alpha = grad_scale(self.alpha[self.index], g)
-        xmax = grad_scale(self.xmax[self.index], g)
+        alpha = grad_scale(self.alpha, g)
+        xmax = grad_scale(self.xmax, g)
 
-        if self.sign:
-            wq = round_pass((torch.clamp(filters/xmax, -1, 1) * xmax)/alpha) * alpha
-        else:
-            wq = round_pass((torch.clamp(filters/xmax, 0, 1) * xmax)/alpha) * alpha 
+        w = F.hardtanh(filters/xmax.abs(), -1, 1) * xmax.abs()
+        w = w/alpha.abs()
+        wq = round_pass(w)*alpha.abs()
 
         return wq
 
@@ -163,7 +159,7 @@ class linearDPQ(nn.Linear):
         return F.linear(x, w_q, self.bias)
 
 class ActDPQ(nn.Module):
-    def __init__(self, signed=True, nbits=4, qmin=1e-3, qmax=100, dmin=1e-5, dmax=10):
+    def __init__(self, signed=False, nbits=4, qmin=1e-3, qmax=100, dmin=1e-5, dmax=10):
         """
         :param nbits: the initial quantization bit width of activation
         :param signed: whether the activation data is signed
@@ -176,43 +172,47 @@ class ActDPQ(nn.Module):
         self.signed = signed
         self.nbits = nbits
         self.index = 0
-        self.alpha = Parameter(torch.Tensor(3))
-        self.xmax = Parameter(torch.Tensor(3))
-        self.register_buffer('init_state', torch.zeros(3))
+        self.alpha = Parameter(torch.Tensor(1))
+        self.xmax = Parameter(torch.Tensor(1))
+        self.register_buffer('init_state', torch.zeros(1))
 
     def get_nbits(self):
-        self.xmax[self.index].data.copy_(self.xmax[self.index].clamp(self.qmin, self.qmax))
-        self.alpha[self.index].data.copy_(self.alpha[self.index].clamp(self.dmin, self.dmax))
+        self.xmax.data.copy_(self.xmax.clamp(self.qmin, self.qmax))
+        self.alpha.data.copy_(self.alpha.clamp(self.dmin, self.dmax))
         if self.signed:
-            nbits = (torch.log(self.xmax[self.index]/self.alpha[self.index] + 1) / math.log(2) + 1).ceil()
+            nbits = (torch.log(self.xmax/self.alpha + 1) / math.log(2) + 1).ceil()
         else:
-            nbits = (torch.log(self.xmax[self.index]/self.alpha[self.index] + 1) / math.log(2)).ceil()
+            nbits = (torch.log(self.xmax/self.alpha + 1) / math.log(2)).ceil()
         self.nbits = int(nbits.item())
         return nbits
 
     def forward(self, x):
-        if self.alpha[self.index] is None:
+        if self.alpha is None:
             return x
         
-        if self.training and self.init_state[self.index] == 0:
+        if self.training and self.init_state == 0:
             Qp = 2 ** (self.nbits - 1) - 1
-            self.xmax[self.index].data.copy_(x.abs().max())
-            self.alpha[self.index].data.copy_(self.xmax[self.index] / Qp)
+            self.xmax.data.copy_(x.abs().max())
+            self.alpha.data.copy_(self.xmax / Qp)
             # self.alpha[self.index].data.copy_(2 * x.abs().mean() / math.sqrt(Qp))
             # self.xmax[self.index].data.copy_(self.alpha[self.index] * Qp)
-            self.init_state[self.index].fill_(1)
+            self.init_state.fill_(1)
 
-        self.xmax[self.index].data.copy_(self.xmax[self.index].clamp(self.qmin, self.qmax))
-        self.alpha[self.index].data.copy_(self.alpha[self.index].clamp(self.dmin, self.dmax))
-        Qp = (self.xmax[self.index]/self.alpha[self.index]).item()
+        self.xmax.data.copy_(self.xmax.clamp(self.qmin, self.qmax))
+        self.alpha.data.copy_(self.alpha.clamp(self.dmin, self.dmax))
+        Qp = (self.xmax/self.alpha).item()
         g = 1.0 / math.sqrt(x.numel() * Qp)
-        alpha = grad_scale(self.alpha[self.index], g)
-        xmax = grad_scale(self.xmax[self.index], g)
+        alpha = grad_scale(self.alpha, g)
+        xmax = grad_scale(self.xmax, g)
 
         if self.signed: 
-            x = round_pass((torch.clamp(x/xmax, -1, 1)*xmax)/alpha) * alpha
+            x = F.hardtanh(x/xmax.abs(), -1, 1) * xmax.abs()
+            # x = round_pass((torch.clamp(x/xmax, -1, 1)*xmax)/alpha) * alpha
         else:
-            x = round_pass((torch.clamp(x/xmax, 0, 1)*xmax)/alpha) * alpha
+            x = F.hardtanh(x/xmax.abs(), 0, 1) * xmax.abs()
+            # x = round_pass((torch.clamp(x/xmax, 0, 1)*xmax)/alpha) * alpha
+        x = x / alpha.abs()
+        x = round_pass(x) * alpha.abs()
         
         return x
 

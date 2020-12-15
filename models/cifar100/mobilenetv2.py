@@ -72,20 +72,25 @@ class MobileNetV2(nn.Module):
         self.conv2 = nn.Conv2d(1280, class_num, 1)
 
     def forward(self, x):
+        features = []
         x = self.pre(x)
         x = self.stage1(x)
         x = self.stage2(x)
+        features.append(x)
         x = self.stage3(x)
         x = self.stage4(x)
+        features.append(x)
         x = self.stage5(x)
         x = self.stage6(x)
+        features.append(x)
         x = self.stage7(x)
         x = self.conv1(x)
+        features.append(x)
         x = F.adaptive_avg_pool2d(x, 1)
         x = self.conv2(x)
         x = x.view(x.size(0), -1)
 
-        return x
+        return features, x
 
     def _make_stage(self, repeat, in_channels, out_channels, stride, t):
 

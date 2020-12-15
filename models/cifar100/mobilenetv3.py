@@ -136,7 +136,7 @@ class MobileNetV3(nn.Module):
 
         # building first layer
         input_channel = _make_divisible(16 * width_mult, 8)
-        layers = [conv_3x3_bn(3, input_channel, 2)]
+        layers = [conv_3x3_bn(3, input_channel, 1)]
         # building inverted residual blocks
         block = InvertedResidual
         for k, t, c, use_se, use_hs, s in self.cfgs:
@@ -192,7 +192,7 @@ def mobilenetv3_large(**kwargs):
         [3,   1,  16, 0, 0, 1],
         [3,   4,  24, 0, 0, 2],
         [3,   3,  24, 0, 0, 1],
-        [5,   3,  40, 1, 0, 2],
+        [5,   3,  40, 1, 0, 1],
         [5,   3,  40, 1, 0, 1],
         [5,   3,  40, 1, 0, 1],
         [3,   6,  80, 0, 1, 2],
@@ -215,7 +215,7 @@ def mobilenetv3_small(**kwargs):
     cfgs = [
         # k, t, c, SE, HS, s 
         [3,    1,  16, 1, 0, 2],
-        [3,  4.5,  24, 0, 0, 2],
+        [3,  4.5,  24, 0, 0, 1],
         [3, 3.67,  24, 0, 0, 1],
         [5,    4,  40, 1, 1, 2],
         [5,    6,  40, 1, 1, 1],

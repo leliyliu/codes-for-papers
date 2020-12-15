@@ -70,12 +70,21 @@ class Conv2dHSQ(_Conv2dQ):
         Qn = -2 ** (self.nbits - 1)
         Qp = 2 ** (self.nbits - 1) - 1
         if self.training and self.init_state == 0:
-            self.alpha.data.copy_(2 * filters.abs().mean() / math.sqrt(Qp))
+            if self.q_mode == Qmodes.layer_wise.value:
+                self.alpha.data.copy_(2 * filters.abs().mean() / math.sqrt(Qp))
+            else:
+                t = filters.abs()
+                for _ in range(len(filters.shape) - 1):
+                    t = t.mean(-1)
+                self.alpha.data.copy_(2 * t / math.sqrt(Qp))
             self.init_state.fill_(1)
         g = 1.0 / math.sqrt(filters.numel() * Qp)
 
         # Method1: 31GB GPU memory (AlexNet w4a4 bs 2048) 17min/epoch
         alpha = grad_scale(self.alpha, g)
+        size = [1] * len(filters.shape)
+        size[0] = -1
+        alpha = alpha.reshape(size)
         w = filters / alpha.abs()
         w = F.hardtanh(w, Qn, Qp)
         w_q = round_pass(w) * alpha.abs()

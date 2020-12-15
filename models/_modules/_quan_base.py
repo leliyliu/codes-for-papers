@@ -190,10 +190,10 @@ class _Conv2dQ(nn.Conv2d):
             self.register_parameter('alpha', None)
             return
         self.q_mode = kwargs_q['mode']
-        if self.q_mode == Qmodes.kernel_wise:
-            self.alpha = Parameter(torch.Tensor(out_channels)) # 也就是每一个kernel 对应了一个相应的alpha
+        if self.q_mode == Qmodes.layer_wise.value:
+            self.alpha = Parameter(torch.Tensor(1)) # 也就是每一个kernel 对应了一个相应的alpha
         else:  # layer-wise quantization
-            self.alpha = Parameter(torch.Tensor(1))
+            self.alpha = Parameter(torch.Tensor(out_channels))
         self.register_buffer('init_state', torch.zeros(1))
 
     def add_param(self, param_k, param_v):

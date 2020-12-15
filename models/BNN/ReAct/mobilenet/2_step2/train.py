@@ -33,6 +33,8 @@ parser.add_argument('--label_smooth', type=float, default=0.1, help='label smoot
 parser.add_argument('--teacher', type=str, default='resnet34', help='path of ImageNet')
 parser.add_argument('-j', '--workers', default=40, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
+parser.add_argument('--resume', type=str, default='', help='the path store the model')
+parser.add_argument('-e', '--evaluate', default=False, action='store_true', dest='evaluate')
 args = parser.parse_args()
 
 CLASSES = 1000
@@ -95,7 +97,7 @@ def main():
     checkpoint = torch.load(checkpoint_tar)
     model_student.load_state_dict(checkpoint['state_dict'], strict=False)
 
-    checkpoint_tar = os.path.join(args.save, 'checkpoint.pth.tar')
+    checkpoint_tar = os.path.join(args.save, 'model_best.pth.tar')
     if os.path.exists(checkpoint_tar):
         logging.info('loading checkpoint {} ..........'.format(checkpoint_tar))
         checkpoint = torch.load(checkpoint_tar)
@@ -143,6 +145,13 @@ def main():
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
 
+    if args.evaluate:
+        _, valid_top1_acc, valid_top5_acc = validate(0, val_loader, model_student, criterion, args)
+        logging.info('the evaluate model for student model ;  acc1 is : {} and acc5 is {}'.format(valid_top1_acc, valid_top5_acc))
+        print('the evaluate model for student model ;  acc1 is : {} and acc5 is {}'.format(valid_top1_acc, valid_top5_acc))
+        return 
+    
+    print('begin for training !!!')
     # train the model
     epoch = start_epoch
     while epoch < args.epochs:
@@ -257,7 +266,6 @@ def validate(epoch, val_loader, model, criterion, args):
               .format(top1=top1, top5=top5))
 
     return losses.avg, top1.avg, top5.avg
-
 
 if __name__ == '__main__':
     main()
