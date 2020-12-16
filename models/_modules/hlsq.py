@@ -43,7 +43,6 @@ class FunLSQ(torch.autograd.Function):
         # grad_alpha.clamp_(-alpha.item(), alpha.item())  # FYI
         return grad_weight, grad_alpha, None, None, None
 
-
 def grad_scale(x, scale):
     y = x
     y_grad = x * scale

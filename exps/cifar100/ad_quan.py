@@ -12,6 +12,7 @@ import argparse
 import time
 import logging
 import random
+import math
 
 import numpy as np
 import torch
@@ -38,8 +39,9 @@ def main():
                     metavar='N', help='print frequency (default: 10)')
     parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
-    parser.add_argument('--epochs', default=100, type=int, help='training epochs')
-    parser.add_argument('--milestones', default=[30, 60, 90], nargs='+', type=int,
+    parser.add_argument('--epochs', default=50, type=int, help='training epochs')
+    parser.add_argument('--alter-epoch', default=10, type=int, help='alternating epoch for evolution')
+    parser.add_argument('--milestones', default=[15, 30, 40], nargs='+', type=int,
                     help='milestones of MultiStepLR')
     parser.add_argument('--manual-seed', default=2, type=int, help='random seed is settled')
     parser.add_argument('--checkpoint', type=str, default='checkpoint')
@@ -47,7 +49,7 @@ def main():
     parser.add_argument('--save', default='EXP', type=str, help='save for the tensor log')
     parser.add_argument('--save-model', type=str, default='cifar100-mobilenetv2-HSQ-models/model_best.pth.tar')
     parser.add_argument('--pretrained', default=False, action='store_true', help='load pretrained model')
-    parser.add_argument('--quan-mode', type=str, default='Conv2dLSQ', 
+    parser.add_argument('--quan-mode', type=str, default='Conv2dDPQ', 
                     help='corresponding for the quantize conv')
     parser.add_argument('--q-mode', choices=q_modes_choice, default='layer_wise',
                     help='Quantization modes: ' + ' | '.join(q_modes_choice) +
@@ -59,7 +61,7 @@ def main():
     np.random.seed(args.manual_seed)
     random.seed(args.manual_seed)  # 设置随机种子
 
-    args.save = 'cifar100-{}-{}-{}-{}'.format(args.net, args.save, args.quan_mode[-3:], time.strftime("%Y%m%d-%H%M%S"))
+    args.save = 'ADmix-cifar100-{}-{}-{}-{}'.format(args.net, args.save, args.quan_mode[-3:], time.strftime("%Y%m%d-%H%M%S"))
     writer = SummaryWriter(log_dir=os.path.join(
             args.log_dir, args.save))
     input_tensor = torch.Tensor(1, 3, 32, 32).cuda()
@@ -78,12 +80,11 @@ def main():
         checkpoint = torch.load(os.path.join(args.log_dir, '{}-{}-models/model_best.pth.tar'.format('cifar100', args.net)))
         net.load_state_dict(checkpoint['net'])
 
+    flops, params = get_model_complexity_info(net, (3,32,32), print_per_layer_stat=False)
+    logging.info('the original model {} flops is {} and its params is {} '.format(args.net, flops, params))
+
     replace_conv_recursively(net, args.quan_mode, args)
 
-    if not args.quan_mode == 'Conv2dDPQ':
-        flops, params = get_model_complexity_info(net, (3,32,32), print_per_layer_stat=False)
-        logging.info('the model after quantized flops is {} and its params is {} '.format(flops, params))
-        writer.add_graph(net, input_tensor)
     logging.info('args = %s', args)
     
 
@@ -107,10 +108,28 @@ def main():
     )
 
     loss_function = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(net.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=5e-4)
-    train_scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.milestones, gamma=0.2) #learning rate decay
+    alphaparams, xmaxparams = [], []
+    for name, param in net.named_parameters():
+        if not param.requires_grad:
+            continue
+        if 'xmax' in name:
+            xmaxparams.append(param)
+        elif 'alpha' in name:
+            alphaparams.append(param)
+        else:
+            xmaxparams.append(param)
+            alphaparams.append(param)
+
+    alphaparams = [{'params': alphaparams, 'weight_decay': 5e-4}]
+    xmaxparams = [{'params': xmaxparams, 'weight_decay': 5e-4}]
+
+    alphaoptimizer = optim.SGD(alphaparams, lr=args.learning_rate, momentum=0.9, weight_decay=5e-4)
+    alphascheduler = optim.lr_scheduler.MultiStepLR(alphaoptimizer, milestones=args.milestones, gamma=0.2) #learning rate decay
     iter_per_epoch = len(cifar100_training_loader)
-    warmup_scheduler = WarmUpLR(optimizer, iter_per_epoch * args.warm)
+    alphawarmup_scheduler = WarmUpLR(alphaoptimizer, iter_per_epoch * args.warm)
+    xmaxoptimizer = optim.SGD(xmaxparams, args.learning_rate, momentum=0.9, weight_decay=5e-4)
+    xmaxscheduler = optim.lr_scheduler.MultiStepLR(xmaxoptimizer, milestones=args.milestones, gamma=0.2)
+    xmaxwarmup_scheduler = WarmUpLR(xmaxoptimizer, iter_per_epoch * args.warm)
 
     #use tensorboard
     if not os.path.exists(args.log_dir):
@@ -118,10 +137,9 @@ def main():
 
     #since tensorboard can't overwrite old values
     #so the only way is to create a new tensorboard log
-    modelfile = 'cifar100' if args.q_mode == 'layer_wise' else 'kernel-cifar100'
 
     best_acc = 0.0
-    args.start_epoch = 0
+    args.iter, args.alpha_start_epoch, args.mix_start_epoch = 0, 0, 0
     if args.resume:
         if os.path.isfile('{}/{}'.format(args.log_dir, args.save_model)):
             logging.info("=> loading checkpoint '{}/{}'".format(args.log_dir, args.save_model))
@@ -130,7 +148,12 @@ def main():
             net.load_state_dict(checkpoint['net'])
             logging.info('best acc is {:0.2f}'.format(checkpoint['acc']))
             best_acc = checkpoint['acc']
-            args.start_epoch = checkpoint['epoch']
+            if 'alpha' in args.save_model:
+                args.alpha_start_epoch = checkpoint['epoch']
+                args.mix_start_epoch = args.alter_epoch * (args.alpha_start_epoch // args.alter_epoch)
+            else:
+                args.mix_start_epoch = checkpoint['epoch']
+                args.alpha_start_epoch = args.alter_epoch * (args.mix_start_epoch // args.alter_epoch + 1)
         else:
             logging.info("=> no checkpoint found at '{}/{}'".format(args.log_dir, args.save_model))
             raise Exception('No such model saved !')
@@ -140,32 +163,55 @@ def main():
         logging.info('the final best acc is {}'.format(best_acc))
         return 
 
-    for epoch in range(args.start_epoch, args.epochs):
-        train(net, cifar100_training_loader, args, optimizer, epoch, writer, warmup_scheduler, loss_function)
-        acc = eval_training(net, cifar100_test_loader, args, writer, loss_function, epoch)
-        if epoch > args.warm:
-            train_scheduler.step(epoch)
+    whole_alter = math.ceil(args.epochs / args.alter_epoch)
+    for iter in range(args.iter, whole_alter):
+        logging.info('the iter in {}'.format(iter))
+        while args.alpha_start_epoch < min((iter+1) * args.alter_epoch, args.epochs):
+            train(net, cifar100_training_loader, args, alphaoptimizer, args.alpha_start_epoch, writer, alphawarmup_scheduler, loss_function)
+            acc = eval_training(net, cifar100_test_loader, args, writer, loss_function, args.alpha_start_epoch, tb=False)
+            if args.alpha_start_epoch > args.warm:
+                alphascheduler.step(args.alpha_start_epoch)
+            args.alpha_start_epoch += 1
 
-        is_best = False
-        if acc > best_acc:
-            best_acc = acc
-            logging.info('the best acc is {} in epoch {}'.format(best_acc, epoch))
-            is_best = True
-            if args.quan_mode == 'Conv2dDPQ':
+            is_best = False
+            if acc > best_acc:
+                best_acc = acc
+                logging.info('the best acc is {} in epoch {}'.format(best_acc, args.alpha_start_epoch))
+                is_best = True
                 flops, params = get_model_complexity_info(net, (3,32,32), print_per_layer_stat=False)
                 logging.info('the model after quantized flops is {} and its params is {} '.format(flops, params))
-        save_checkpoint({
-            'epoch': epoch,
-            'net': net.state_dict(),
-            'acc': best_acc,
-            'optimizer': optimizer.state_dict(),
-        }, is_best, save='logger/{}-{}-{}-models'.format(modelfile, args.net, args.quan_mode[-3:]))
+            save_checkpoint({
+                'epoch': args.alpha_start_epoch,
+                'net': net.state_dict(),
+                'acc': best_acc,
+                'optimizer': alphaoptimizer.state_dict(),
+            }, is_best, save='logger/alpha-{}-{}-{}-models'.format('cifar100', args.net, args.quan_mode[-3:]))
+
+        while args.mix_start_epoch < min((iter+1) * args.alter_epoch, args.epochs):
+            train(net, cifar100_training_loader, args, xmaxoptimizer, args.mix_start_epoch, writer, xmaxwarmup_scheduler, loss_function)
+            acc = eval_training(net, cifar100_test_loader, args, writer, loss_function, args.mix_start_epoch, tb=False)
+            if args.mix_start_epoch > args.warm:
+                xmaxscheduler.step(args.mix_start_epoch)
+            args.mix_start_epoch += 1
+
+            is_best = False
+            if acc > best_acc:
+                best_acc = acc
+                logging.info('the best acc is {} in epoch {}'.format(best_acc, args.mix_start_epoch))
+                is_best = True
+                flops, params = get_model_complexity_info(net, (3,32,32), print_per_layer_stat=False)
+                logging.info('the model after quantized flops is {} and its params is {} '.format(flops, params))
+            save_checkpoint({
+                'epoch': args.mix_start_epoch,
+                'net': net.state_dict(),
+                'acc': best_acc,
+                'optimizer': xmaxoptimizer.state_dict(),
+            }, is_best, save='logger/mix-{}-{}-{}-models'.format('cifar100', args.net, args.quan_mode[-3:]))
 
 
-    if args.quan_mode == 'Conv2dDPQ':
-        flops, params = get_model_complexity_info(net, (3,32,32), print_per_layer_stat=False)
-        logging.info('the model after quantized flops is {} and its params is {} '.format(flops, params))
-        writer.add_graph(net, input_tensor)
+    flops, params = get_model_complexity_info(net, (3,32,32), print_per_layer_stat=False)
+    logging.info('the model after quantized flops is {} and its params is {} '.format(flops, params))
+    writer.add_graph(net, input_tensor)
     logging.info('the final best acc is {}'.format(best_acc))
     writer.close()
 

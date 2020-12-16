@@ -83,10 +83,7 @@ class Conv2dDPQ(nn.Conv2d):
         self.sign = sign
         self.nbits = wbits 
         self.act_dpq = ActDPQ(signed=False, nbits=abits)
-        if self.q_mode == Qmodes.kernel_wise:
-            self.alpha = Parameter(torch.Tensor(out_channels))
-        else:
-            self.alpha = Parameter(torch.Tensor(1))
+        self.alpha = Parameter(torch.Tensor(1))
         self.xmax = Parameter(torch.Tensor(1))
         self.weight.requires_grad_(True)
         if bias:

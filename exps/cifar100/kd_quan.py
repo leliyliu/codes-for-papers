@@ -21,7 +21,7 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 
 from utils.network import save_checkpoint
-from exps.cifar100.run_tool import feature_train, kd_train, eval_training, get_network, get_training_dataloader, get_test_dataloader, WarmUpLR, add_weight_decay
+from exps.cifar100.run_tool import kd_train, eval_training, get_network, get_training_dataloader, get_test_dataloader, WarmUpLR
 from wrapper.qcode_wrapper import replace_conv_recursively
 from utils.ptflops import get_model_complexity_info
 
