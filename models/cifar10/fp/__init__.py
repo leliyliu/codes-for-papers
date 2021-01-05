@@ -15,6 +15,8 @@ from .resnext import *
 from .regnet import *
 from .mobilenet import *
 from .mobilenetv2 import *
+from .mobilenetv3 import *
+from .cresnet import *
 
 
 def load_pre_state_dict(model, original_state_dict, key_map=None):

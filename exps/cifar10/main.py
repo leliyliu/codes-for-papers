@@ -38,7 +38,7 @@ torch.cuda.manual_seed_all(args.manual_seed)
 np.random.seed(args.manual_seed)
 random.seed(args.manual_seed)  # 设置随机种子
 
-args.save = 'train-model-{}-{}'.format(args.save, time.strftime("%Y%m%d-%H%M%S"))
+args.save = 'train-{}-{}-{}'.format(args.arch, args.save, time.strftime("%Y%m%d-%H%M%S"))
 
 from tensorboardX import SummaryWriter
 writer_comment = args.save 
@@ -85,7 +85,7 @@ classes = ('plane', 'car', 'bird', 'cat', 'deer',
            'dog', 'frog', 'horse', 'ship', 'truck')
 
 # Model
-print('==> Building model..')
+logging.info('==> Building model..')
 # net = VGG('VGG19')
 # net = ResNet18()
 # net = PreActResNet18()
@@ -97,7 +97,7 @@ print('==> Building model..')
 net = models.__dict__[args.arch]()
 
 flops, params = get_model_complexity_info(net, (3,32,32))
-print('the total flops of mobilenetv2 is : {} and whole params is : {}'.format(flops, params)) 
+logging.info('the total flops of {} is : {} and whole params is : {}'.format(args.arch, flops, params)) 
 # net = DPN92()
 # net = ShuffleNetG2()
 # net = SENet18()
@@ -112,7 +112,7 @@ if device == 'cuda':
 
 if args.resume:
     # Load checkpoint.
-    print('==> Resuming from checkpoint..')
+    logging.info('==> Resuming from checkpoint..')
     assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
     checkpoint = torch.load('./checkpoint/{}-ckpt.pth'.format(args.arch))
     net.load_state_dict(checkpoint['net'])
@@ -127,7 +127,7 @@ scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
 
 # Training
 def train(epoch):
-    print('\nEpoch: %d' % epoch)
+    logging.info('\nEpoch: %d' % epoch)
     net.train()
     train_loss = 0
     correct = 0

@@ -251,7 +251,7 @@ def feature_train(net, teacher_model, train_loader, args, optimizers, epoch, wri
             optimizer.step()
 
         n_iter = (epoch - 1) * len(train_loader) + batch_index + 1
-
+ 
         if batch_index % args.print_freq == 0:
             logging.info('Initial-Training Epoch: {epoch} [{trained_samples}/{total_samples}]\tLoss: {:0.4f}\tLR: {:0.6f}'.format(
                 loss.item() / args.print_freq,

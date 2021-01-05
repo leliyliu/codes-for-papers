@@ -14,12 +14,12 @@ import torch.distributed as dist
 import torch.utils.data.distributed
 from tensorboardX import SummaryWriter
 
-sys.path.append("../../")
-from utils.utils import *
-from utils import KD_loss
+# sys.path.append("../../")
+from models.BNN.ReAct.utils.utils import *
+from models.BNN.ReAct.utils import KD_loss
 from torchvision import datasets, transforms
 from torch.autograd import Variable
-from reactnet import reactnet
+from .reactnet import reactnet
 import torchvision.models as models
 
 parser = argparse.ArgumentParser("birealnet18")
