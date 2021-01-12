@@ -15,8 +15,10 @@ import sys
 import argparse
 import numpy as np
 import random
+import shutil
 
-import models.cifar10.fp as models
+import models.cifar10 as models
+import models.BNN as BModels 
 from utils.utils import progress_bar
 from utils.ptflops import get_model_complexity_info
 
@@ -31,161 +33,315 @@ parser.add_argument('--evaluate', default=False, action='store_true',
 parser.add_argument('--save', type=str, default='EXP', 
                     help='path for saving trained models')
 parser.add_argument('--manual-seed', default=2, type=int, help='random seed is settled')
-args = parser.parse_args()
+parser.add_argument('-g', '--gpu', default=None, type=int,
+                    help='GPU id to use.')
+parser.add_argument('-p', '--print-freq', default=50, type=int,
+                    metavar='N', help='print frequency (default: 10)')
 
-torch.manual_seed(args.manual_seed)
-torch.cuda.manual_seed_all(args.manual_seed)
-np.random.seed(args.manual_seed)
-random.seed(args.manual_seed)  # 设置随机种子
+def main():
+    args = parser.parse_args()
 
-args.save = 'train-{}-{}-{}'.format(args.arch, args.save, time.strftime("%Y%m%d-%H%M%S"))
+    torch.manual_seed(args.manual_seed)
+    torch.cuda.manual_seed_all(args.manual_seed)
+    np.random.seed(args.manual_seed)
+    random.seed(args.manual_seed)  # 设置随机种子
 
-from tensorboardX import SummaryWriter
-writer_comment = args.save 
-log_dir = '{}/{}'.format('logger', args.save)
-writer = SummaryWriter(log_dir = log_dir, comment=writer_comment)
+    args.save = 'cifar-train-{}-{}-{}'.format(args.arch, args.save, time.strftime("%Y%m%d-%H%M%S"))
 
-log_format = '%(asctime)s %(message)s'
-logging.basicConfig(stream=sys.stdout, level=logging.INFO,
-    format=log_format, datefmt='%m/%d %I:%M:%S %p')
+    from tensorboardX import SummaryWriter
+    writer_comment = args.save 
+    log_dir = '{}/{}'.format('logger', args.save)
+    writer = SummaryWriter(log_dir = log_dir, comment=writer_comment)
 
-fh = logging.FileHandler(os.path.join('{}/log.txt'.format(log_dir)))
-fh.setFormatter(logging.Formatter(log_format))
-logging.getLogger().addHandler(fh)
+    log_format = '%(asctime)s %(message)s'
+    logging.basicConfig(stream=sys.stdout, level=logging.INFO,
+        format=log_format, datefmt='%m/%d %I:%M:%S %p')
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-best_acc = 0  # best test accuracy
-start_epoch = 0  # start from epoch 0 or last checkpoint epoch
+    fh = logging.FileHandler(os.path.join('{}/log.txt'.format(log_dir)))
+    fh.setFormatter(logging.Formatter(log_format))
+    logging.getLogger().addHandler(fh)
 
-# Data
-print('==> Preparing data..')
-transform_train = transforms.Compose([
-    transforms.RandomCrop(32, padding=4),
-    transforms.RandomHorizontalFlip(),
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-])
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    best_acc = 0  # best test accuracy
+    start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
-transform_test = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-])
+    # Data
+    print('==> Preparing data..')
+    transform_train = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ])
 
-trainset = torchvision.datasets.CIFAR10(
-    root='./data', train=True, download=True, transform=transform_train)
-trainloader = torch.utils.data.DataLoader(
-    trainset, batch_size=128, shuffle=True, num_workers=2)
+    transform_test = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ])
 
-testset = torchvision.datasets.CIFAR10(
-    root='./data', train=False, download=True, transform=transform_test)
-testloader = torch.utils.data.DataLoader(
-    testset, batch_size=100, shuffle=False, num_workers=2)
+    trainset = torchvision.datasets.CIFAR10(
+        root='./data', train=True, download=True, transform=transform_train)
+    trainloader = torch.utils.data.DataLoader(
+        trainset, batch_size=256, shuffle=True, num_workers=2)
 
-classes = ('plane', 'car', 'bird', 'cat', 'deer',
-           'dog', 'frog', 'horse', 'ship', 'truck')
+    testset = torchvision.datasets.CIFAR10(
+        root='./data', train=False, download=True, transform=transform_test)
+    testloader = torch.utils.data.DataLoader(
+        testset, batch_size=256, shuffle=False, num_workers=2)
 
-# Model
-logging.info('==> Building model..')
-# net = VGG('VGG19')
-# net = ResNet18()
-# net = PreActResNet18()
-# net = GoogLeNet()
-# net = DenseNet121()
-# net = ResNeXt29_2x64d()
-# net = MobileNet()
-# net = MobileNetV2()
-net = models.__dict__[args.arch]()
+    classes = ('plane', 'car', 'bird', 'cat', 'deer',
+            'dog', 'frog', 'horse', 'ship', 'truck')
 
-flops, params = get_model_complexity_info(net, (3,32,32))
-logging.info('the total flops of {} is : {} and whole params is : {}'.format(args.arch, flops, params)) 
-# net = DPN92()
-# net = ShuffleNetG2()
-# net = SENet18()
-# net = ShuffleNetV2(1)
-# net = EfficientNetB0()
-# net = RegNetX_200MF()
-# net = SimpleDLA()
-net = net.to(device)
-if device == 'cuda':
-    net = torch.nn.DataParallel(net)
-    cudnn.benchmark = True
+    # Model
+    logging.info('==> Building model..')
+    # net = VGG('VGG19')
+    # net = ResNet18()
+    # net = PreActResNet18()
+    # net = GoogLeNet()
+    # net = DenseNet121()
+    # net = ResNeXt29_2x64d()
+    # net = MobileNet()
+    # net = MobileNetV2()
+    if args.arch in models.__dict__: 
+        net = models.__dict__[args.arch]()
+    else:
+        net = BModels.__dict__[args.arch]()
 
-if args.resume:
-    # Load checkpoint.
-    logging.info('==> Resuming from checkpoint..')
-    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load('./checkpoint/{}-ckpt.pth'.format(args.arch))
-    net.load_state_dict(checkpoint['net'])
-    best_acc = checkpoint['acc']
-    start_epoch = checkpoint['epoch']
+    flops, params = get_model_complexity_info(net, (3,32,32))
+    logging.info('the total flops of {} is : {} and whole params is : {}'.format(args.arch, flops, params)) 
+    # net = DPN92()
+    # net = ShuffleNetG2()
+    # net = SENet18()
+    # net = ShuffleNetV2(1)
+    # net = EfficientNetB0()
+    # net = RegNetX_200MF()
+    # net = SimpleDLA()
+    net = net.to(device)
+    if device == 'cuda':
+        net = torch.nn.DataParallel(net)
+        cudnn.benchmark = True
 
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(net.parameters(), lr=args.lr,
-                      momentum=0.9, weight_decay=5e-4)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
+    if args.resume:
+        # Load checkpoint.
+        logging.info('==> Resuming from checkpoint..')
+        assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
+        checkpoint = torch.load('./checkpoint/{}-ckpt.pth'.format(args.arch))
+        net.load_state_dict(checkpoint['net'])
+        best_acc = checkpoint['acc']
+        start_epoch = checkpoint['epoch']
+
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(net.parameters(), lr=args.lr,
+                        momentum=0.9, weight_decay=5e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
+
+    if args.evaluate:
+        validate(testloader, net, criterion, args)
+        return 
+
+    best_acc = 0.0
+    for epoch in range(start_epoch, start_epoch+200):
+        # train(epoch)
+        train_loss, train_top1 = train(trainloader, net, criterion, optimizer, epoch, args)
+        validate_loss, validate_top1 = validate(testloader, net, criterion, args) 
+        logging.info('the train loss is : {} ; For Train !  the top1 accuracy is : {} '.format(train_loss, train_top1))
+        logging.info('the validate loss is : {} ; For Validate !  the top1 accuracy is : {} '.format(validate_loss, validate_top1))
+        writer.add_scalars('Train-Loss/Training-Validate',{
+            'train_loss': train_loss,
+            'validate_loss': validate_loss
+        }, epoch + 1)
+        writer.add_scalars('Train-Top1/Training-Validate',{
+            'train_acc1': train_top1,
+            'validate_acc1': validate_top1
+        }, epoch + 1)
+        writer.add_scalar('Learning-Rate-For-Train', 
+            optimizer.state_dict()['param_groups'][0]['lr'],
+            epoch + 1)
+        if validate_top1 > best_acc:
+            best_acc = validate_top1
+            logging.info('the best model top1 is : {} and its epoch is {} !'.format(best_acc, epoch))
+            state = {
+                'net': net.module.state_dict(),
+                'acc': best_acc, 
+                'epoch': epoch
+            }
+            if not os.path.isdir('checkpoint'):
+                os.mkdir('checkpoint')
+            torch.save(state, './checkpoint/{}-ckpt.pth'.format(args.arch))
+        scheduler.step()
+
+    logging.info('the final best model top1 is : {} !'.format(best_acc))
+
+#     acc = 100.*correct/total
+#     if acc > best_acc:
+#         print('Saving..')
+#         state = {
+#             'net': net.state_dict(),
+#             'acc': acc,
+#             'epoch': epoch,
+#         }
+#         if not os.path.isdir('checkpoint'):
+#             os.mkdir('checkpoint')
+#         torch.save(state, './checkpoint/{}-ckpt.pth'.format(args.arch))
+#         best_acc = acc
 
 
-# Training
-def train(epoch):
-    logging.info('\nEpoch: %d' % epoch)
-    net.train()
-    train_loss = 0
-    correct = 0
-    total = 0
-    for batch_idx, (inputs, targets) in enumerate(trainloader):
-        inputs, targets = inputs.to(device), targets.to(device)
+def train(train_loader, model, criterion, optimizer, epoch, args):
+    batch_time = AverageMeter('Time', ':6.3f')
+    data_time = AverageMeter('Data', ':6.3f')
+    losses = AverageMeter('Loss', ':.4e')
+    top1 = AverageMeter('Acc@1', ':6.2f')
+    top5 = AverageMeter('Acc@5', ':6.2f')
+    progress = ProgressMeter(len(train_loader), batch_time, data_time, losses, top1,
+                             top5, prefix="Epoch: [{}]".format(epoch))
+
+    # switch to train mode
+    model.train()
+
+    end = time.time()
+    for i, (images, target) in enumerate(train_loader):
+        # measure data loading time
+        data_time.update(time.time() - end)
+
+        if args.gpu is not None:
+            images = images.cuda(args.gpu, non_blocking=True)
+        target = target.cuda(args.gpu, non_blocking=True)
+
+        # compute output
+        output = model(images)
+        loss = criterion(output, target)
+
+        # measure accuracy and record loss
+        acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        losses.update(loss.item(), images.size(0))
+        top1.update(acc1[0], images.size(0))
+        top5.update(acc5[0], images.size(0))
+
+        # compute gradient and do SGD step
         optimizer.zero_grad()
-        _, outputs = net(inputs)
-        loss = criterion(outputs, targets)
         loss.backward()
         optimizer.step()
 
-        train_loss += loss.item()
-        _, predicted = outputs.max(1)
-        total += targets.size(0)
-        correct += predicted.eq(targets).sum().item()
+        # measure elapsed time
+        batch_time.update(time.time() - end)
+        end = time.time()
 
-        progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                     % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
+        if i % args.print_freq == 0:
+            progress.print(i)
 
-def test(epoch):
-    global best_acc
-    net.eval()
-    test_loss = 0
-    correct = 0
-    total = 0
+    return losses.avg, top1.avg
+
+def validate(val_loader, model, criterion, args):
+    batch_time = AverageMeter('Time', ':6.3f')
+    losses = AverageMeter('Loss', ':.4e')
+    top1 = AverageMeter('Acc@1', ':6.2f')
+    top5 = AverageMeter('Acc@5', ':6.2f')
+    progress = ProgressMeter(len(val_loader), batch_time, losses, top1, top5,
+                             prefix='Test: ')
+
+    # switch to evaluate mode
+    model.eval()
+
     with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(testloader):
-            inputs, targets = inputs.to(device), targets.to(device)
-            _, outputs = net(inputs)
-            loss = criterion(outputs, targets)
+        end = time.time()
+        for i, (images, target) in enumerate(val_loader):
+            if args.gpu is not None:
+                images = images.cuda(args.gpu, non_blocking=True)
+            target = target.cuda(args.gpu, non_blocking=True)
 
-            test_loss += loss.item()
-            _, predicted = outputs.max(1)
-            total += targets.size(0)
-            correct += predicted.eq(targets).sum().item()
+            # compute output
+            output = model(images)
+            loss = criterion(output, target)
 
-            progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                         % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
+            # measure accuracy and record loss
+            acc1, acc5 = accuracy(output, target, topk=(1, 5))
+            losses.update(loss.item(), images.size(0))
+            top1.update(acc1[0], images.size(0))
+            top5.update(acc5[0], images.size(0))
 
-    # Save checkpoint.
-    acc = 100.*correct/total
-    if acc > best_acc:
-        print('Saving..')
-        state = {
-            'net': net.state_dict(),
-            'acc': acc,
-            'epoch': epoch,
-        }
-        if not os.path.isdir('checkpoint'):
-            os.mkdir('checkpoint')
-        torch.save(state, './checkpoint/{}-ckpt.pth'.format(args.arch))
-        best_acc = acc
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
 
-if args.evaluate:
-    test(start_epoch)
-else:
-    for epoch in range(start_epoch, start_epoch+200):
-        train(epoch)
-        test(epoch)
-        scheduler.step()
+            if i % args.print_freq == 0:
+                progress.print(i)
+
+        # TODO: this should also be done with the ProgressMeter
+        logging.info(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
+              .format(top1=top1, top5=top5))
+
+    return losses.avg, top1.avg
+
+
+def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+    torch.save(state, filename)
+    if is_best:
+        shutil.copyfile(filename, 'model_best.pth.tar')
+
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+    def __init__(self, name, fmt=':f'):
+        self.name = name
+        self.fmt = fmt
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+    def __str__(self):
+        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
+        return fmtstr.format(**self.__dict__)
+
+
+class ProgressMeter(object):
+    def __init__(self, num_batches, *meters, prefix=""):
+        self.batch_fmtstr = self._get_batch_fmtstr(num_batches)
+        self.meters = meters
+        self.prefix = prefix
+
+    def print(self, batch):
+        entries = [self.prefix + self.batch_fmtstr.format(batch)]
+        entries += [str(meter) for meter in self.meters]
+        logging.info('\t'.join(entries))
+
+    def _get_batch_fmtstr(self, num_batches):
+        num_digits = len(str(num_batches // 1))
+        fmt = '{:' + str(num_digits) + 'd}'
+        return '[' + fmt + '/' + fmt.format(num_batches) + ']'
+
+
+def adjust_learning_rate(optimizer, epoch, args):
+    """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
+    lr = args.lr * (0.1 ** (epoch // 30))
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+
+
+def accuracy(output, target, topk=(1,)):
+    """Computes the accuracy over the k top predictions for the specified values of k"""
+    with torch.no_grad():
+        maxk = max(topk)
+        batch_size = target.size(0)
+
+        _, pred = output.topk(maxk, 1, True, True)
+        pred = pred.t()
+        correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+        res = []
+        for k in topk:
+            correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
+            res.append(correct_k.mul_(100.0 / batch_size))
+        return res
+
+if __name__ == "__main__":
+    main()

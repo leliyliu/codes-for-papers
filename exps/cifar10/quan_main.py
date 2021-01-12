@@ -213,4 +213,4 @@ else:
         test(epoch)
         scheduler.step()
 
-    logging.info('after {} train for quantization, the best acc1 is {} '.format(args.quan_mode[-4:], best_acc))
+    logging.info('after {} train for quantization, the best acc1 is {} '.format(args.quan_mode[-3:], best_acc))
