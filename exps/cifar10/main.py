@@ -19,7 +19,7 @@ import shutil
 
 import models.cifar10 as models
 import models.BNN as BModels 
-from utils.utils import progress_bar
+# from utils.utils import progress_bar
 from utils.ptflops import get_model_complexity_info
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')

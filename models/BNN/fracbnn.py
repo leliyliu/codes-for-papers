@@ -1,12 +1,12 @@
-from models.BNN.birealnet import CifarBiRealNet
 import torch
+from torch.functional import norm
 import torch.nn as nn
+from torch.nn.modules.container import ParameterList
 import torch.utils.model_zoo as model_zoo
 import torch.nn.functional as F
 import numpy as np
 
-__all__ = ['reactnet', 'reactnet20', 'reactnet32']
-
+__all__ = ['fracbnn', 'fracbnn20', 'fracbnn32']
 stage_out_channel = [32] + [64] + [128] * 2 + [256] * 2 + [512] * 6 + [1024] * 2
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -94,29 +94,34 @@ class BasicBlock(nn.Module):
         super(BasicBlock, self).__init__()
         norm_layer = nn.BatchNorm2d
 
-        self.move11 = LearnableBias(inplanes)
         self.binary_3x3= binaryconv3x3(inplanes, inplanes, stride=stride)
         self.bn1 = norm_layer(inplanes)
 
-        self.move12 = LearnableBias(inplanes)
+        self.move11 = LearnableBias(inplanes)
         self.prelu1 = nn.PReLU(inplanes)
-        self.move13 = LearnableBias(inplanes)
+        self.move12 = LearnableBias(inplanes)
 
-        self.move21 = LearnableBias(inplanes)
+        self.bnmid = norm_layer(inplanes)
 
         if inplanes == planes:
             self.binary_pw = binaryconv1x1(inplanes, planes)
             self.bn2 = norm_layer(planes)
+            self.move21 = LearnableBias(inplanes)
+            self.prelu21 = nn.PReLU(inplanes)
+            self.move22 = LearnableBias(inplanes)
         else:
             self.binary_pw_down1 = binaryconv1x1(inplanes, inplanes)
             self.binary_pw_down2 = binaryconv1x1(inplanes, inplanes)
             self.bn2_1 = norm_layer(inplanes)
             self.bn2_2 = norm_layer(inplanes)
+            self.move21 = LearnableBias(inplanes)
+            self.prelu21 = nn.PReLU(inplanes)
+            self.move22 = LearnableBias(inplanes)
+            self.move23 = LearnableBias(inplanes)
+            self.prelu22 = nn.PReLU(inplanes)
+            self.move24 = LearnableBias(inplanes)
 
-        self.move22 = LearnableBias(planes)
-        self.prelu2 = nn.PReLU(planes)
-        self.move23 = LearnableBias(planes)
-
+        self.finalbn = norm_layer(planes)
         self.binary_activation = BinaryActivation()
         self.stride = stride
         self.inplanes = inplanes
@@ -127,27 +132,27 @@ class BasicBlock(nn.Module):
 
     def forward(self, x):
 
-        out1 = self.move11(x)
-
-        out1 = self.binary_activation(out1)
+        out1 = self.binary_activation(x)
         out1 = self.binary_3x3(out1)
         out1 = self.bn1(out1)
+        out1 = self.move11(out1)
+        out1 = self.prelu1(out1)
+        out1 = self.move12(out1)
 
         if self.stride == 2:
             x = self.pooling(x)
 
         out1 = x + out1
+        out1 = self.bnmid(out1)
 
-        out1 = self.move12(out1)
-        out1 = self.prelu1(out1)
-        out1 = self.move13(out1)
-
-        out2 = self.move21(out1)
-        out2 = self.binary_activation(out2)
+        out2 = self.binary_activation(out1)
 
         if self.inplanes == self.planes:
             out2 = self.binary_pw(out2)
             out2 = self.bn2(out2)
+            out2 = self.move21(out2)
+            out2 = self.prelu21(out2)
+            out2 = self.move22(out2)
             out2 += out1
 
         else:
@@ -157,19 +162,24 @@ class BasicBlock(nn.Module):
             out2_2 = self.binary_pw_down2(out2)
             out2_1 = self.bn2_1(out2_1)
             out2_2 = self.bn2_2(out2_2)
+            out2_1 = self.move21(out2_1)
+            out2_1 = self.prelu21(out2_1)
+            out2_1 = self.move22 (out2_1)
+            out2_2 = self.move23(out2_2)
+            out2_2 = self.prelu22(out2_2)
+            out2_2 = self.move24(out2_2)
             out2_1 += out1
             out2_2 += out1
             out2 = torch.cat([out2_1, out2_2], dim=1)
 
-        out2 = self.move22(out2)
-        out2 = self.prelu2(out2)
-        out2 = self.move23(out2)
+        out2 = self.finalbn(out2)
 
         return out2
 
-class Reactnet(nn.Module):
+
+class FracBNN(nn.Module):
     def __init__(self, stage_out_channel, num_classes=1000):
-        super(Reactnet, self).__init__()
+        super(FracBNN, self).__init__()
         self.feature = nn.ModuleList()
         for i in range(len(stage_out_channel)):
             if i == 0:
@@ -192,21 +202,20 @@ class Reactnet(nn.Module):
 
         return x
 
-def reactnet():
+def fracbnn():
     stage_out_channel = [32] + [64] + [128] * 2 + [256] * 2 + [512] * 6 + [1024] * 2
-    model = Reactnet(stage_out_channel=stage_out_channel)
+    model = FracBNN(stage_out_channel=stage_out_channel)
     return model 
 
-def reactnet20():
+def fracbnn20():
     stage_out_channel = [16] * 4 + [32] * 3  + [64] * 3 
-    model = Reactnet(stage_out_channel=stage_out_channel)
+    model = FracBNN(stage_out_channel=stage_out_channel)
     return model 
 
-def reactnet32():
+def fracbnn32():
     stage_out_channel = [16] * 6 + [32] * 5  + [64] * 5 
-    model = Reactnet(stage_out_channel=stage_out_channel)
+    model = FracBNN(stage_out_channel=stage_out_channel)
     return model 
-
 
 
 
