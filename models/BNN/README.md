@@ -16,8 +16,12 @@ ReActNet-A | 69.5% | 0.87 x 10^8 | Model-ReAct-MobileNet
 | Network | Learning-Rate | Epochs | Top1-acc | Methods 
 | - | - | - | - | - |
 | birealnet20 | 2e-2 | 200 | 78.99 | - | 
+| reactnet20 | 1e-1 | 200 | 78.62 | - |
 | reactnet20 | 2e-2 | 200 | 74.49 | - |
-| reactnet20 | 5e-3 | 200 | - | - |
-| reactnet20 | 1e-3 | 200 | - | - |
-| fracbnn20 | 2e-2 | 200 | - | - |
-| fracbnn20 | 1e-3 | 200 | - | - |
+| reactnet20 | 5e-3 | 200 | 70.47 | - |
+| reactnet20 | 1e-3 | 200 | 65.16 | - |
+| fracbnn20 | 1e-1 | 200 | 77.38 | - |
+| fracbnn20 | 2e-2 | 200 | 76.03 | - |
+| fracbnn20 | 5e-3 | 200 | 71.08 | - | 
+| fracbnn20 | 1e-3 | 200 | 66.19 | - |
+| resnet20 | 1e-1 | 200 | 92.65 | - | 

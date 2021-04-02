@@ -17,7 +17,7 @@ from .mobilenet import *
 from .mobilenetv2 import *
 from .mobilenetv3 import *
 from .cresnet import *
-
+from .swim_trans import * 
 
 def load_pre_state_dict(model, original_state_dict, key_map=None):
     if not isinstance(key_map, OrderedDict):
