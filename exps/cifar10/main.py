@@ -37,6 +37,8 @@ parser.add_argument('-g', '--gpu', default=None, type=int,
                     help='GPU id to use.')
 parser.add_argument('-p', '--print-freq', default=50, type=int,
                     metavar='N', help='print frequency (default: 10)')
+parser.add_argument('-b', '--batch-size', default=256, type=int, help='batch size')
+parser.add_argument('--epochs', default=200, type=int, help='epochs')
 
 def main():
     args = parser.parse_args()
@@ -107,8 +109,6 @@ def main():
     else:
         net = BModels.__dict__[args.arch]()
 
-    flops, params = get_model_complexity_info(net, (3,32,32))
-    logging.info('the total flops of {} is : {} and whole params is : {}'.format(args.arch, flops, params)) 
     # net = DPN92()
     # net = ShuffleNetG2()
     # net = SENet18()
@@ -117,6 +117,8 @@ def main():
     # net = RegNetX_200MF()
     # net = SimpleDLA()
     net = net.to(device)
+    flops, params = get_model_complexity_info(net, (3,32,32), print_per_layer_stat=False)
+    logging.info('the total flops of {} is : {} and whole params is : {}'.format(args.arch, flops, params)) 
     if device == 'cuda':
         net = torch.nn.DataParallel(net)
         cudnn.benchmark = True
