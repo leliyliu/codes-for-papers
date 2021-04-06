@@ -33,7 +33,7 @@ import torch.nn.functional as F
 import torch.nn.init as init
 from models.BNN.rbnn_module import *
 
-__all__ = ['rbnn_resnet20_1w1a', 'rbnn_resnet32_1w1a', 'resnet18A_1w1a','resnet18B_1w1a','resnet18C_1w1a','resnet18_1w1a']
+__all__ = ['rbnn_resnet20_1w1a', 'rbnn_resnet32_1w1a', 'resnet18A_1w1a','resnet18B_1w1a','resnet18C_1w1a','resnet18_1w1a', 'rbnn_resnet34']
 
 
 class LambdaLayer(nn.Module):
@@ -191,6 +191,9 @@ def resnet18C_1w1a(**kwargs):
 
 def resnet18_1w1a(**kwargs):
     return CResNet(BasicBlock, [2,2,2,2], [64,128,256,512],**kwargs)
+
+def rbnn_resnet34(**kwargs):
+    return CResNet(BasicBlock, [3,4,6,3], [64,128,256,512],**kwargs)
 
 def test(net):
     import numpy as np

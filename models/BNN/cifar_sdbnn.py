@@ -379,7 +379,7 @@ class VGG_SMALL_1W1A(nn.Module):
         x = self.fc(x)
         return x
 
-def vgg_small_1w1a(**kwargs):
+def SD_vgg_small_1w1a(**kwargs):
     model = VGG_SMALL_1W1A(**kwargs)
     return model
 
